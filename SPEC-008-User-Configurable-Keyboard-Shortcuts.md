@@ -1475,7 +1475,7 @@ Note: in the old format, `"ZW"` could be a user key for `Floor`; in the new one,
 
 Below is a non-normative template, an example of what the user sees after clicking "Help (Markdown)…". The composition of sections and columns can be refined, but the principle must remain: **all actions**, **active and default bindings**, **commands without keys**, grouping, conflicts, reserved keys.
 
-````markdown
+
 # BIMCraft — Hotkeys
 
 Profile: BIMCraft · Version: 2 · Platform: Linux · Generated: 2026-11-08
@@ -1554,4 +1554,3 @@ Profile: BIMCraft · Version: 2 · Platform: Linux · Generated: 2026-11-08
 ## Conflicts
 
 No conflicts. If `Ctrl+D` were assigned to both "Move" and "Copy", there would be a row here with both actions and a suggestion to replace the owner.
-````
