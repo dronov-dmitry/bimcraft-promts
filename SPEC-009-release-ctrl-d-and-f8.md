@@ -1,4 +1,4 @@
-# TS-009. Freeing `Ctrl+D` for the User and Removing the Duplicate `F11` Binding
+# SPEC-009. Freeing `Ctrl+D` for the User and Removing the Duplicate `F11` Binding
 
 **Status:** **implemented** (except for items dependent on TS-008: assigning modifier-key combinations, profile migration, and the one-time notification)  
 **Date:** 2026-11-08  
@@ -12,7 +12,7 @@
 > Assigning `Ctrl+D`/`F11` to actions, profile migration, and the one-time notification have been deferred until TS-008: without a modifier-key
 > binding registry, there is nothing to assign, and the notification would promise functionality that is not yet available.
 
-> **Priority.** TS-009 refines the decisions in TS-008 regarding `Ctrl+D`, Home, and `F8`/`F11`. If any items in TS-008 conflict with this document, TS-009 takes precedence:
+> **Priority.** SPEC-009 refines the decisions in TS-008 regarding `Ctrl+D`, Home, and `F8`/`F11`. If any items in TS-008 conflict with this document, SPEC-009 takes precedence:
 >
 > - Home is bound to `Ctrl+U`, not `Ctrl+D` or `Ctrl+Shift+H`;
 > - `Ctrl+D` is **unassigned** by default and is not assigned to either Home or Move;
@@ -129,7 +129,7 @@ Decision: **keep only `F8`; remove `F11` from the application.** `F11` becomes f
 
 - `README.md`, line 417 — description of the Start page and `Ctrl+D`.
 
-- `TS-008` — proposes `Ctrl+D` for Move and `Ctrl+Shift+H` for Home. TS-009 supersedes that decision.
+- `TS-008` — proposes `Ctrl+D` for Move and `Ctrl+Shift+H` for Home. SPEC-009 supersedes that decision.
 
 ### 2.2. `F8` and `F11`
 
@@ -159,7 +159,7 @@ This does not prevent moving Home to `Ctrl+U`, but it requires an explicit prior
 - **Outside note editing**, `Ctrl+U` opens/closes the Start page.
 - In an ordinary text field, `Ctrl+U` must not open Home (the existing `egui_wants_keyboard_input` check applies).
 
-If the product later decides that `Ctrl+U` must **always** open Home, the underline shortcut will have to be moved separately (for example, to `Ctrl+Shift+U`). This is not required by TS-009; context-based priority is sufficient.
+If the product later decides that `Ctrl+U` must **always** open Home, the underline shortcut will have to be moved separately (for example, to `Ctrl+Shift+U`). This is not required by SPEC-009; context-based priority is sufficient.
 
 ---
 
@@ -172,7 +172,7 @@ If the product later decides that `Ctrl+U` must **always** open Home, the underl
 | **Free shortcut**        | A shortcut that is not assigned to any action in the default profile; the user can assign it.                                     |
 | **Default profile**      | The default set of bindings (BIMCraft/Revit/Archicad/Empty) defined in TS-008.                                                    |
 | **User-defined binding** | A binding explicitly added or changed by the user; it takes precedence over the default binding.                                  |
-| **Function key**         | `F1`–`F24`; TS-009 concerns `F8` and `F11`.                                                                                       |
+| **Function key**         | `F1`–`F24`; SPEC-009 concerns `F8` and `F11`.                                                                                       |
 | **Legacy sequence**      | A two-letter/digit Revit-style sequence (`AG`, `OG`, `WA`), not a function key.                                                   |
 
 ---
@@ -235,7 +235,7 @@ If the product later decides that `Ctrl+U` must **always** open Home, the underl
 
 5. If the user has explicitly assigned `F11` to an action, preserve that binding. Only the default `F11` binding for alignment guides is removed.
 
-6. `AG`/`OG` are legacy sequences, not function keys. They are not removed by TS-009, to avoid disrupting established habits. If the product wants exactly one binding, that can be decided separately, or the user can remove them in the dialog. They may remain in the default BIMCraft profile for compatibility; the "F8 only" criterion applies to function keys.
+6. `AG`/`OG` are legacy sequences, not function keys. They are not removed by SPEC-009, to avoid disrupting established habits. If the product wants exactly one binding, that can be decided separately, or the user can remove them in the dialog. They may remain in the default BIMCraft profile for compatibility; the "F8 only" criterion applies to function keys.
 
 7. If TS-008 has not yet been implemented, `AG`/`OG` continue to work as before; `F11` stops working.
 
@@ -274,7 +274,7 @@ The default profile and/or `settings.json` must be migrated:
 | `Ctrl+D`, user-defined binding          | Whatever the user assigned                       | Preserve                                                                    |
 | Alignment guides, default bindings      | `F8`, `F11`                                      | `F8`                                                                        |
 | `F11`, user-defined binding             | Whatever the user assigned                       | Preserve                                                                    |
-| `AG`/`OG`, default bindings             | `AG`, `OG`                                       | No change under TS-009                                                      |
+| `AG`/`OG`, default bindings             | `AG`, `OG`                                       | No change under SPEC-009                                                      |
 
 Rules:
 
@@ -308,7 +308,7 @@ Do not show the notification if:
    - note: "`Ctrl+U` in the note editor means Underline."
 5. **README.md**, line 417: replace `Ctrl+D` with `Ctrl+U` and explain that `Ctrl+D` is free for user-defined bindings.
 6. **docs/areas/desktop.md**, line 12: replace `Ctrl+D` with `Ctrl+U`.
-7. **docs/areas/shortcuts.md** (from TS-008): add a section titled "What Changed in TS-009": Home → `Ctrl+U`, `Ctrl+D` is free, `F11` is free, and `F8` is the only function key for alignment guides.
+7. **docs/areas/shortcuts.md** (from TS-008): add a section titled "What Changed in SPEC-009": Home → `Ctrl+U`, `Ctrl+D` is free, `F11` is free, and `F8` is the only function key for alignment guides.
 8. All new strings must use `t()`/`tf()` and be added to translations.
 
 ### 4.7. Scope Boundaries
@@ -383,9 +383,9 @@ Additional changes:
 | `crates/ui-egui/src/settings.rs`    | If TS-008 is implemented: migration.                             |
 | `README.md`                         | Line 417: `Ctrl+U`, `Ctrl+D` is free.                            |
 | `docs/areas/desktop.md`             | Line 12: `Ctrl+U`.                                               |
-| `docs/areas/shortcuts.md`           | "TS-009 Changes" section.                                        |
+| `docs/areas/shortcuts.md`           | "SPEC-009 Changes" section.                                        |
 | `translations/ui/*`                 | New notification/tooltips strings, if required.                  |
-| `TS-008-hotkeys.md`                 | Add a reference to TS-009 and a note about its priority.         |
+| `TS-008-hotkeys.md`                 | Add a reference to SPEC-009 and a note about its priority.         |
 
 ### 5.4. What Does Not Change
 
@@ -412,7 +412,7 @@ Additional changes:
 11. **Archicad profile.** In this profile, assigning `Ctrl+D` to Move is expected. Do not globally enforce that "`Ctrl+D` is free" across all profiles; this criterion applies to the default BIMCraft profile.
 12. **Notification.** Show it once; do not display it on every launch. Do not show it if the user has already configured `Ctrl+D` themselves.
 13. **Documentation.** There are several references to `Ctrl+D` in the README and docs. Update all of them to avoid confusing users.
-14. **TS-008.** If TS-008 implementation is already in progress, do not leave `Ctrl+D` = Move and `Ctrl+Shift+H` = Home in the default profile: this directly contradicts TS-009.
+14. **TS-008.** If TS-008 implementation is already in progress, do not leave `Ctrl+D` = Move and `Ctrl+Shift+H` = Home in the default profile: this directly contradicts SPEC-009.
 15. **AG/OG.** If the product decides to keep them, the help must honestly state that the action has `F8` and legacy sequences. If it decides to remove them, update tests and documentation. Do not leave a silent inconsistency.
 
 ---
@@ -495,13 +495,13 @@ cargo test --workspace
    - line 12: `Ctrl+D` → `Ctrl+U`;
    - clarify that Home is a rarely used function and has therefore been moved to `Ctrl+U`.
 3. `docs/areas/shortcuts.md`:
-   - add a new section, "TS-009 Changes";
+   - add a new section, "SPEC-009 Changes";
    - include a "before → after" table;
    - add a note about `Ctrl+U` in notes;
    - add a note about `F11` and the OS.
 4. `TS-008-hotkeys.md`:
-   - add a note at the beginning stating that decisions about `Ctrl+D`/Home and `F8`/`F11` are refined by TS-009;
-   - in sections 4.12, 5.5, 10, and appendices B/E, TS-009 takes precedence.
+   - add a note at the beginning stating that decisions about `Ctrl+D`/Home and `F8`/`F11` are refined by SPEC-009;
+   - in sections 4.12, 5.5, 10, and appendices B/E, SPEC-009 takes precedence.
 5. `translations/ui/*`: add new notification and tooltip strings; existing `Home`/`Back` strings do not need to be translated again.
 6. CHANGELOG: note that `Ctrl+D` has been freed, Home has moved to `Ctrl+U`, and `F11` no longer duplicates `F8`.
 
