@@ -1,7 +1,7 @@
-# SPEC-007. Strip Footing (and all runs) as a wall: end grips, mitred corner joints, gluing to the bottom of a wall
+# SPEC-007. Strip footing (and all runs) as a wall: end grips, mitred corner joints, gluing to the bottom of a wall
 
-Status: **specification, not implemented**
-Date: 2026-11-06
+Status: **implemented; section 12 — follow-up work on the corner node when moving**
+Date: 2026-11-06 (follow-up — 2026-11-08)
 Project: BIMCraft (working copy `BIMCraft-plugins-clean`, branch `feature/wasm-plugins`, current project format 17)
 Related specs: `SPEC-006-turning-point-behind-anchor.md` (document formatting)
 Task type: behaviour of linear elements ("runs": strip footing, beam, pipe, cable tray, etc.) — editing ends with grips, mitred corner joints modelled on walls, the "strip under the bottom of a wall" link, and a general join toggle for walls and runs.
@@ -10,6 +10,14 @@ Screenshot of the joint defect (from the task):
 `https://private-user-images.githubusercontent.com/9892891/696054534-fbc7c1d4-d1e6-46ab-8cfa-9b2329b33626.png`
 
 ---
+
+## 0. General working rules
+
+- Commits are atomic, one item per commit (1, 2, 3, 4, "Smaller"), messages follow the branch style
+  (imperative-mood subject, body explains *why*, not *what*).
+- Code and commit-message language — English; documentation in `docs/` — Russian (as currently in
+  `docs/areas/plugins.md`).
+- UI strings — only via `t()` / `tf()` from `crates/ui-egui/src/lang.rs`, with `msgctxt` where
 
 ## 1. Context and task
 
@@ -274,9 +282,4 @@ Requirements:
 9. `join = false` on either of the pair — both ends rectangular; neighbours are not stretched on `move`.
 10. `modify {join: false}` → the joint disappeared; `modify {join: true}` → the joint returned (the outline reassembled).
 11. Wall regression: existing wall joint tests (`moving_a_wall_drags_the_walls_joined_to_it…`, `walls::outline` tests, `walls/index.rs`) — green without changed expectations.
-12. 3D: the body of a joined run is cut by the same plane as the plan outline (outline/body comparison, as in existing `view3d` tests); IFC: a horizontal joined run is exported as a body with the joint (modelled on the `ifc.rs` wall tests).
-13. Snaps: `snap::Scene` gives points of the new outline (the mitre corner — not the cut-off rectangle corner).
-
-**Gluing:**
-
-14. An existing wall + creating a strip exactly on its axis with the top at the bottom of the wall → the condition holds; `modify {base_offset: …}` of the wall → the strip's `offset` recalculated, the top of the section = the bottom of the wall (verify numerically, respecting `justify`
+12. 3D: the body of a joined run is cut by the same plane as the plan outline (outline/body
