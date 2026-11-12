@@ -1579,7 +1579,7 @@ Note: in the old format `"ZW"` could be a user key for `Floor`; in the new one i
 
 Below is not a normative template but an example of what the user sees after "Reference (Markdown)…". The set of sections and columns may be refined, but the principle must remain: **all actions**, **active and default bindings**, **commands without keys**, grouping, conflicts, reserved keys.
 
-````markdown
+
 # BIMCraft — keyboard shortcuts
 
 Profile: BIMCraft · Version: 2 · Platform: Linux · Generated: 2026-11-08
@@ -1659,7 +1659,7 @@ Profile: BIMCraft · Version: 2 · Platform: Linux · Generated: 2026-11-08
 
 There are no conflicts. If `Ctrl+D` were assigned both to "Move" and to "Copy", there would be a row here with both actions and a suggestion to replace the owner.
 
-````
+
 
 ---
 
