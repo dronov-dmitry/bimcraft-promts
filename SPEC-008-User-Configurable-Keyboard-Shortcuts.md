@@ -1,326 +1,326 @@
-# SPEC-008. User-Configurable Keyboard Shortcuts: Assign Custom Combinations to All Commands, Multiple Combinations per Command, Layout Independence, Import and Export
+# SPEC-008. Custom keyboard shortcuts: assigning own combinations to every command, several combinations per command, layout independence, import and export
 
-**Status:** Ready for implementation  
-**Date:** 2026-11-08  
-**Project:** BIMCraft (Rust, `crates/core`, `crates/ui-egui`, egui 0.36)  
-**Related documents:** `TS-007-ribbon-foundation-handles-joints-snapping.md` (document formatting), `TS-009-free-ctrl-d-and-f8.md` (clarification regarding `Ctrl+D`/Home and `F8`/`F11`), `BIMCraft/docs/areas/desktop.md` (Keyboard Shortcuts section), `BIMCraft/README.md` (keyboard shortcuts section)  
-**Task type:** User-configurable interface settings (app-level settings), keyboard input, settings dialog, file format, migration of existing settings.
+Status: **implemented**
+Date: 2026-11-08
+Last modified: 2026-11-12
+Project: BIMCraft (Rust, `crates/core`, `crates/ui-egui`, egui 0.36)
+Related documents: `ТЗ-007-ленточный-фундамент-ручки-стыки-приклеивание.md` (document layout), `ТЗ-009-освобождение-ctrl-d-и-f8.md` (clarification on `Ctrl+D`/Home and `F8`/`F11`), `BIMCraft/docs/areas/desktop.md` (the "Keyboard Shortcuts" section), `BIMCraft/README.md` (the keyboard shortcuts section)
+Task type: user interface customization (app-level settings), keyboard input, settings dialog, file format, migration of existing settings.
 
-> **Current status.** Decisions concerning `Ctrl+D`, Home, and `F8`/`F11` are clarified in `TS-009-free-ctrl-d-and-f8.md`. TS-009 takes precedence wherever the documents conflict:
+> **Relevance.** The decisions on `Ctrl+D`, Home and `F8`/`F11` were refined in `ТЗ-009-освобождение-ctrl-d-и-f8.md` (SPEC-009), and where clauses conflict, SPEC-009 takes precedence:
+> - Home is `Ctrl+U`, not `Ctrl+D` and not `Ctrl+Shift+H`;
+> - `Ctrl+D` in the BIMCraft default profile is **free** (Move on it — only in the Archicad profile);
+> - "Alignment guides" — `F8` only, without `F11`.
+> Examples and acceptance criteria of SPEC-008 that state otherwise should be read with this correction.
 >
-> - Home is `Ctrl+U`, not `Ctrl+D` or `Ctrl+Shift+H`;
-> - `Ctrl+D` is **free** in the default BIMCraft profile (Move may use it only in the Archicad profile);
-> - **Alignment Guides** use `F8` only, without `F11`.
->   Examples and acceptance criteria in SPEC-008 that specify otherwise must be read with these corrections.
+> **Change 2026-11-12 (takes precedence over SPEC-009 regarding Home).** Home is back on `Ctrl+D`:
+> - `ui.view.home` in the BIMCraft profile again has the default binding `Ctrl+D`;
+> - `Ctrl+U` is removed from Home and stays free;
+> - in the Archicad-like profile `Ctrl+D` may still be taken by Move (the profile replaces Home with that binding);
+> - in text fields `Ctrl+D` belongs to the field; in the note editor `Ctrl+U` remains underline.
+> Clauses of SPEC-008 and SPEC-009 where Home is listed on `Ctrl+U` are to be considered outdated. See Appendix H for details.
+>
+> **Change 2026-11-12 (sequences).** Besides two-key sequences (`WA`, `MV`), a three-key one (`BMM`) is also accepted. Input: the first two keys wait for the third only if a binding starting with them exists; otherwise the two-key binding fires.
 
 ---
 
-## 0. General Working Rules
+## 0. General working rules
 
-- Commits must be atomic, one item per commit; messages must follow the branch's style (an imperative title, with the body explaining *why*, not *what*).
-- The language of code, identifiers, code comments, and commit messages is English. Documentation in `docs/` and this file are in Russian.
-- All UI strings must go through `t()` / `tf()` / `msg!()` from `crates/ui-egui/src/lang.rs` and `bimcraft-i18n`; add new strings to `translations/ui/bimcraft-ui.pot` and the translations.
-- Settings are application settings, not project settings: they live in `settings.json`, survive New/Open, and are not stored in `.bimcraft`.
-- Do not break existing two-letter Revit-style commands (`WA`, `DR`, `WN`, `RM`, `CL`, `DI`, `TG`, `MV`, `CO`, …): they remain functional and become one type of binding.
-- Cover every behavior change with tests; use `egui_kittest` for UI tests and ordinary unit tests for the parser/model.
-- Do not use `subagent` or parallel agents (user requirement); all work must be performed in the current session.
+- Commits are atomic, one item per commit; messages follow the branch style (an imperative title, a body that explains *why*, not *what*).
+- The language of code, identifiers, code comments and commit messages is English. Documentation in `docs/` is Russian; this document is the English translation of `ТЗ-008-горячие-клавиши.md` — keep both files in sync when either changes.
+- All UI strings go only through `t()` / `tf()` / `msg!()` from `crates/ui-egui/src/lang.rs` and `bimcraft-i18n`; add new strings to `translations/ui/bimcraft-ui.pot` and to the translations.
+- Settings are application settings, not project settings: they live in `settings.json`, survive New/Open and never get into `.bimcraft`.
+- Do not break the existing two-letter Revit-style commands (`WA`, `DR`, `WN`, `RM`, `CL`, `DI`, `TG`, `MV`, `CO`, …): they keep working and become one kind of binding.
+- Cover every behavior change with tests; for UI — `egui_kittest`, for the parser/model — ordinary unit tests.
+- Do not use `subagent` or parallel agents (user rule); the work is done in the current session.
 
 ---
 
-## 1. Context and Task
+## 1. Context and task
 
-### 1.1. What the User Wants
+### 1.1. What the user wants
 
-BIMCraft commands are currently entered using the Revit-style approach: two Latin letters or digits (`WA` — Wall, `DR` — Door, `MV` — Move). The user needs to:
+Today BIMCraft commands are typed in the Revit style: two Latin letters or digits (`WA` — wall, `DR` — door, `MV` — move). The user needs:
 
-1. **Assign custom combinations to all application commands** — as in Revit, through a "Keyboard Shortcuts" dialog, but with real modifiers: `Ctrl`, `Shift`, `Alt`, `Cmd`.
-2. **Assign multiple combinations to one command.** For example, Move may have `Ctrl+D`, `Ctrl+Shift+M`, and the legacy `MV`.
-3. **Make combinations work across keyboard layouts.** `Ctrl+D` on an English layout and `Ctrl+В` on a Russian (ЙЦУКЕН) layout refer to the same physical key and must perform the same action.
-4. **Export all combinations to a text file and import them back.** The file must be human-readable, editable in a text editor, and suitable for transferring settings between machines.
-5. **Provide a default set similar to Archicad:** at minimum, `Ctrl+D` should mean Move (currently `Ctrl+D` opens the Start page/Home; this must be reassigned).
-6. **Provide an easy way to discover all available combinations.** BIMCraft currently has hardcoded fixed combinations but no single place where users can review them: some appear in the dialog, some in tooltips, and some only in code/README. The application needs to export **all active and all existing (default) combinations** to a human-readable Markdown file — a reference/cheat sheet that users can open, print, or share with colleagues.
+1. **To assign their own combinations to every command in the program** — as in Revit, through the "Keyboard Shortcuts" dialog, but with real modifiers: `Ctrl`, `Shift`, `Alt`, `Cmd`.
+2. **Several combinations per command.** For example, "Move" can be `Ctrl+D`, `Ctrl+Shift+M`, and the old `MV` at the same time.
+3. **Combinations must work on different layouts.** `Ctrl+D` on the English layout and `Ctrl+В` on the Russian (ЙЦУКЕН) layout are the same physical key, and both must perform the same action.
+4. **To export all combinations to a text file and load them back.** The file must be human-readable, suitable for editing in a text editor, and must allow settings to be moved between machines.
+5. **A starting set like Archicad's:** at minimum `Ctrl+D` — "Move" (currently `Ctrl+D` opens the start page/Home, this has to be reassigned).
+6. **A simple way to find out which combinations exist at all.** Today BIMCraft has hard-coded fixed combinations but no single place to review them: some are visible in the dialog, some in tooltips, some only in code/README. An export of **all active and all existing (default) combinations** into a human-readable Markdown file is needed — as a reference/cheat sheet that can be opened, printed or handed to a colleague.
 
-### 1.2. Task Definition
+### 1.2. Statement of the task
 
-Replace the current model of "one two-letter combination → one action" with an "action ↔ multiple bindings" model, where a binding is either:
+The current model "one two-letter combination → one action" must be replaced with the model "action ↔ many bindings", where a binding is either:
 
-- a **chord**: modifiers plus one key, e.g. `Ctrl+D`, `Ctrl+Shift+D`, `Alt+F3`;
+- a **chord**: modifiers + one key, e.g. `Ctrl+D`, `Ctrl+Shift+D`, `Alt+F3`;
 - a **sequence**: two keys without modifiers, e.g. `WA`, `MV` (Revit-style compatibility).
 
-Requirements:
+At the same time:
 
-- An action is addressed by a stable identifier, not a localized label.
-- A key is identified by its **physical position** (`physical_key`), not by the character produced by the current keyboard layout.
-- The same chord cannot be assigned to two actions.
-- An action may have 0, 1, or many bindings.
-- Bindings are stored in `settings.json` and can be imported/exported in a text format.
-- Existing settings and legacy two-letter combinations continue to work.
+- an action is addressed by a stable identifier, not by a localized label;
+- a key is determined by **physical position** (`physical_key`), not by the character produced in the current layout;
+- the same chord cannot be assigned to two actions;
+- an action may have 0, 1 or many bindings;
+- bindings are stored in `settings.json`, exported and imported in a text format;
+- old settings and old two-letter combinations keep working.
 
-### 1.3. User Scenarios
+### 1.3. User scenarios
 
-- As an Archicad user, I press `Ctrl+D` and get the Move tool, not the Start page.
-- As a user with a Russian keyboard layout, I press `Ctrl+В` and get the same Move action as `Ctrl+D` on an English layout.
-- As a user, I assign both `Delete` and `Ctrl+Shift+Delete` to Erase and see both combinations in its tooltip.
-- As a user, I export settings to `my-keys.txt`, edit a few lines in a text editor, and import the file again; all valid lines are applied, while invalid ones are reported with line numbers.
-- As a user, I see assigned combinations in ribbon tooltips, menus, and Find (Ctrl+K).
-- As a user, I open "Keyboard Shortcuts Help" and/or export it to `.md` to see all commands, their active and default combinations, including combinations I have not assigned, and print a cheat sheet.
-- As a user, I do not want `Ctrl+C` / `Ctrl+V` intercepted while entering text in a field.
-- As a user, I want to reset one command, a category, or everything to the default set.
+- As an Archicad user, I press `Ctrl+D` and get the "Move" tool, not the start page.
+- As a user with a Russian layout, I press `Ctrl+В` and get the same "Move" as `Ctrl+D` on the English layout.
+- As a user, I assign both `Delete` and `Ctrl+Shift+Delete` to "Delete" and see both combinations in the tooltip.
+- As a user, I export the settings to `my-keys.txt`, edit a couple of lines in a text editor and load them back; all valid lines are applied, invalid ones are shown with line numbers.
+- As a user, I see the assigned combinations in ribbon tooltips, in menus and in Find (Ctrl+K).
+- As a user, I open the "Shortcut reference" and/or export it to `.md` to see all commands, their active and default combinations, including the ones I did not assign, and print the cheat sheet.
+- As a user, I do not want `Ctrl+C` / `Ctrl+V` to be intercepted while typing text in a field.
+- As a user, I want to reset one command, a category or everything to the default set.
 
 ---
 
-## 2. Current State (Based on the Code)
+## 2. What exists now (per the code)
 
-This section records the current implementation so that the work can be targeted rather than becoming a complete rewrite.
+This section records the current state so that the implementation is targeted rather than "rewrite everything".
 
-### 2.1. Action Catalog and Current Binding Model
+### 2.1. Action catalog and the current binding model
 
 - `crates/ui-egui/src/shortcuts.rs`:
-  - `ACTIONS: &[&str]` — approximately 110 action names that can be assigned (walls, doors, views, hide, snaps, etc.). This is **not** the complete core command catalog: some core commands are missing, and some UI actions are not core commands.
-  - `is_key(k)` — a key is considered valid only if `k.len() == 2` and both characters are ASCII alphanumeric. Therefore, `Ctrl+D` is currently impossible.
-  - `resolve_action(desc)` — finds an action by its full English or localized name.
+  - `ACTIONS: &[&str]` — about 110 action names that can be assigned (walls, doors, views, hiding, snaps, etc.). This is **not** the complete core command catalog: some core commands are missing, and some UI actions are not core commands.
+  - `is_key(k)` — a key is considered valid only if `k.len() == 2` and both characters are ASCII alphanumeric. That is, `Ctrl+D` is currently impossible.
+  - `resolve_action(desc)` — looks up an action by its full English or localized name.
   - `parse_shortcuts_file(content)` — reads:
-    - JSON object `{"WA": "Wall"}`;
+    - a JSON object `{"WA": "Wall"}`;
     - Revit lines `<Shortcut CommandName="Wall" Shortcuts="WA#W1"/>`;
-    - lines in the forms `WA - Wall`, `WA = Wall`, `WA: Wall`.
-  - `find_conflict(key, action, app)` — checks whether a two-letter key is already assigned to another action.
-  - `add_shortcuts(parsed)` — adds key/action pairs; skips conflicts and invalid keys.
-  - `load_shortcuts_from_file(path)` — reads files up to 64 KiB, adds valid pairs, and displays a message.
-  - `execute_shortcut_action(action)` — a large `match` on the action name: sets `Tool`, opens a dialog, or calls `self.run(...)`.
-  - `shortcuts_window(ctx)` — modal dialog with search, Load File, Add Shortcut, Restore Defaults, and an action → keys table with Edit/Save/Cancel.
+    - lines `WA - Wall`, `WA = Wall`, `WA: Wall`.
+  - `find_conflict(key, action, app)` — checks whether a two-letter key is taken by another action.
+  - `add_shortcuts(parsed)` — adds "key → action" pairs, skips conflicts and invalid keys.
+  - `load_shortcuts_from_file(path)` — reads a file up to 64 KiB, adds valid pairs, shows a message.
+  - `execute_shortcut_action(action)` — a large `match` on the action name: sets `Tool`, opens a dialog, calls `self.run(...)`.
+  - `shortcuts_window(ctx)` — a modal dialog: search, Load File, Add Shortcut, Restore Defaults, a "action → keys" table, Edit/Save/Cancel.
 - `crates/ui-egui/src/lib.rs`:
   - `SHORTCUTS: [(&str, &str); 54]` — built-in two-letter combinations (`WA`, `DR`, `WN`, `MM`, `DM`, `AL`, `OF`, `DW`, `ZF`, `TL`, `CS`, `PP`, `NP`, `SA`, `VV`, `EH`, `HH`, `KS`, …).
-  - `shortcuts()` — combines `SHORTCUTS`, MEP fitting letters, and core command aliases.
-  - `BimApp::custom_shortcuts: BTreeMap<String, String>` — user bindings of "two-letter key → English action name".
-  - `BimApp::typed: String` — the most recently typed characters (up to two) for two-letter combinations.
-  - `BimApp::shortcut()` — checks `custom_shortcuts` first, then a built-in `match` on `typed`.
-  - `BimApp::keys()` (approximately lines 1780–2050) — keyboard event handling.
+  - `shortcuts()` — merges `SHORTCUTS`, MEP fitting letters and core command aliases.
+  - `BimApp::custom_shortcuts: BTreeMap<String, String>` — user bindings "two-letter key → English action name".
+  - `BimApp::typed: String` — the last typed characters (at most two) for two-letter combinations.
+  - `BimApp::shortcut()` — first tries `custom_shortcuts`, then the built-in `match` on `typed`.
+  - `BimApp::keys()` (around lines 1780–2050) — keyboard handling.
 - `crates/ui-egui/src/settings.rs`:
   - `Settings.shortcuts: BTreeMap<String, String>` — the same two-letter bindings in `settings.json`.
   - `MAX_SHORTCUTS: usize = 256`.
-  - `shortcuts_from(v, base)` — reads only two-character ASCII keys and action names from `ACTIONS`.
+  - `shortcuts_from(v, base)` — reads only keys of two ASCII characters and names from `ACTIONS`.
 - `crates/core/src/engine.rs`:
   - `Command { id, label, aliases, params, run, undoable, menu }` — a core command.
-  - `commands()` — the full catalog, currently **170 commands**.
-  - `find(name)` — finds a command by `id` or alias.
+  - `commands()` — the whole catalog, currently **170 commands**.
+  - `find(name)` — a command by `id` or alias.
 - `crates/core/src/commands.rs`:
-  - `ALL: &[Command]` — 170 commands, 35 of which have `menu`, and 57 of which have aliases.
+  - `ALL: &[Command]` — 170 commands, of which 35 have `menu`, 57 have aliases.
 - `crates/ui-egui/src/find.rs`:
-  - Find (Ctrl+K) displays actions from `shortcuts::ACTIONS` and uses only the **first** matching binding in the label.
-- `docs/areas/desktop.md`, lines 479–488 — current description of the mechanism.
-- `README.md`, line 407 — current user-facing description.
-- **There is no unified help or export.** The dialog displays an action table, but it cannot be exported or printed; built-in combinations are only partially listed in the README and tooltips, and users cannot see the complete list of available commands. Markdown export is intended to close this specific gap.
+  - Find (Ctrl+K) shows actions from `shortcuts::ACTIONS` and uses only the **first** found combination for the label.
+- `docs/areas/desktop.md`, lines 479–488 — the current description of the mechanism.
+- `README.md`, line 407 — the current user-facing description.
+- **There is no single reference and no export.** The dialog shows a table of actions, but it cannot be exported/printed; built-in combinations are listed only partially in the README and in tooltips, and the user does not see the full list of "what exists". The `.md` export must close exactly this gap.
 
-### 2.2. Hardcoded Modifier Shortcuts
+### 2.2. Hard-coded combinations with modifiers
 
-`keys()` currently contains separate checks that are not connected to the dialog and cannot be configured:
+In `keys()` there are currently separate checks, unrelated to the dialog and not configurable:
 
-| Shortcut                 | Action                                   | Location              |
-| ------------------------ | ---------------------------------------- | --------------------- |
-| `Ctrl+S`                 | Save                                     | `lib.rs`, around 1826 |
-| `Ctrl+Shift+S`           | Save As                                  | same                  |
-| `Ctrl+O`                 | Open                                     | around 1829           |
-| `Ctrl+N`                 | New                                      | around 1832           |
-| `Ctrl+K`                 | Find                                     | around 1835           |
-| `Ctrl+,`                 | Settings                                 | around 1838           |
-| `Ctrl+1`                 | Properties                               | around 1841           |
-| `Ctrl+P`                 | Export PDF                               | around 1844           |
-| `Ctrl+D`                 | Home / Start page                        | around 1851           |
-| `Ctrl+Z`                 | Undo (or sketch step)                    | around 1856           |
-| `Ctrl+Shift+Z`, `Ctrl+Y` | Redo                                     | around 1859           |
-| `F8`, `F11`              | Alignment guides                         | around 1905           |
-| `Delete`                 | Delete                                   | around 1888           |
-| `Space`                  | Flip / rotate component / dimension mode | around 1890–1900      |
+| Combination | What it does | Where |
+|---|---|---|
+| `Ctrl+S` | Save | `lib.rs`, around 1826 |
+| `Ctrl+Shift+S` | Save As | same |
+| `Ctrl+O` | Open | around 1829 |
+| `Ctrl+N` | New | around 1832 |
+| `Ctrl+K` | Find | around 1835 |
+| `Ctrl+,` | Settings | around 1838 |
+| `Ctrl+1` | Properties | around 1841 |
+| `Ctrl+P` | Export PDF | around 1844 |
+| `Ctrl+D` | Home / start page | around 1851 |
+| `Ctrl+Z` | Undo (or sketch step) | around 1856 |
+| `Ctrl+Shift+Z`, `Ctrl+Y` | Redo | around 1859 |
+| `F8`, `F11` | Alignment guides | around 1905 |
+| `Delete` | Delete | around 1888 |
+| `Space` | Flip / rotate component / dimension mode | around 1890–1900 |
 
-All of these, except strictly contextual keys such as `Esc`, `Enter`, `Tab`, and `Space`, must move into the action registry and become configurable.
+All of them, except the purely contextual `Esc`, `Enter`, `Tab`, `Space`, must move into the action registry and become configurable.
 
-### 2.3. Current Keyboard Reading Flow
+### 2.3. How the keyboard is read now
 
 In `keys()`:
 
-1. If any modal dialog, popup, or menu is open, processing stops.
-2. Hardcoded `pressed(Modifiers, Key)` checks are evaluated.
-3. If `ctx.egui_wants_keyboard_input()` is true, processing stops.
-4. `Event::Text` events are collected — these are **characters from the current layout**, not physical keys.
-5. Characters are appended to `typed`; when its length reaches 2, `shortcut()` is called.
+1. If any modal dialog, popup or menu is open, handling stops.
+2. Hard-coded `pressed(Modifiers, Key)` checks run.
+3. If `ctx.egui_wants_keyboard_input()`, handling stops.
+4. `Event::Text` is collected — **characters of the current layout**, not physical keys.
+5. Characters are appended to `typed`; at length 2 `shortcut()` is called.
 
 Consequences:
 
-- On a Russian layout, `WA` produces the text `ЦФ`, so the built-in combination does not work.
-- `Ctrl+D` cannot be stored: `is_key` accepts only two ASCII characters.
-- Key order and modifiers are checked manually, outside the dialog.
-- Multiple bindings cannot be assigned to one action: `custom_shortcuts` is `Map<key, action>`, not `Map<action, Vec<key>>`.
-- When editing an action in the dialog, the old user keys for that action are removed (`retain(|_, v| *v != action)`), so exactly one custom key is supported.
-- There is no export; import only adds entries and skips conflicts.
+- on the Russian layout `WA` produces the text `ЦФ`, and the built-in combination does not fire;
+- `Ctrl+D` cannot be stored: `is_key` accepts only two ASCII characters;
+- order and modifiers are checked by hand, outside the dialog;
+- two combinations cannot be assigned to one action: `custom_shortcuts` is a `Map<key, action>`, not a `Map<action, Vec<key>>`;
+- when editing in the dialog, the action's old user keys are deleted (`retain(|_, v| *v != action)`), i.e. exactly one user key is supported;
+- there is no export at all; import only adds and skips conflicts.
 
-### 2.4. Why `Ctrl+D` Currently Conflicts
+### 2.4. Why `Ctrl+D` conflicts now
 
-`Ctrl+D` is hardcoded to `toggle_home()` (the Start page). The user wants `Ctrl+D` = Move, as in Archicad. Therefore:
+`Ctrl+D` is hard-wired to `toggle_home()` (the start page). The user asks for `Ctrl+D` = "Move", as in Archicad. Therefore:
 
-- `Ctrl+D` should execute Move by default;
-- Home must be moved to another combination (the proposed option is `Ctrl+Shift+H`) or left without a shortcut;
-- migration of old settings is safe: legacy user keys were two-letter combinations only, so `Ctrl+D` could not have been stored in them.
-
----
-
-## 3. Terminology
-
-| Term                         | Meaning                                                                                                                                                                                      |
-| ---------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **Action**                   | Any user-facing command that can be assigned keys: a tool, core command, dialog opening, palette toggle, or view. Has a stable `id`.                                                         |
-| **Command**                  | An entry from `bimcraft_core::engine::commands()` with an `id` field; a specific type of action.                                                                                             |
-| **Binding**                  | One keyboard combination assigned to an action.                                                                                                                                              |
-| **Chord**                    | Modifiers plus one key: `Ctrl+D`, `Ctrl+Shift+D`, `Alt+F3`, `F2`.                                                                                                                            |
-| **Sequence**                 | Two keys without modifiers: `WA`, `MV`. Revit-style compatibility.                                                                                                                           |
-| **Physical key**             | Keyboard position (`egui::Key` from `physical_key`), independent of layout. `Ctrl+D` and `Ctrl+В` are the same physical `KeyD`.                                                              |
-| **Logical key**              | A key interpreted according to the active layout; for non-Latin layouts, egui falls back to the physical key.                                                                                |
-| **Keyboard layout**          | The active OS layout (US, RU/ЙЦУКЕН, UA, DE/QWERTZ, FR/AZERTY…).                                                                                                                             |
-| **Profile**                  | A complete set of bindings: a built-in profile (BIMCraft/Revit/Archicad) or a user profile.                                                                                                  |
-| **Conflict**                 | The same chord/sequence is assigned to two different actions.                                                                                                                                |
-| **Reserved key**             | A key the application does not make available for bindings (`Esc`, `Enter`, `Tab`, `Backspace`, arrow keys, `Space`), or a key intercepted by the OS (`Alt+Tab`, `Alt+F4`, `Cmd+Tab`, etc.). |
-| **Canonical representation** | A single representation of a binding in files and memory: Latin physical-key name, modifiers ordered as `Ctrl+Shift+Alt+Meta+Key`.                                                           |
+- `Ctrl+D` by default must perform `Move`;
+- Home must move to another combination (suggested `Ctrl+Shift+H`) or be left without a combination;
+- migration of old settings will not suffer: old user keys were only two-letter ones, so `Ctrl+D` could not be among them.
 
 ---
 
-## 4. Functional Requirements
+## 3. Terms
 
-### 4.1. Completeness of the Action Catalog
+| Term | Meaning |
+|---|---|
+| **Action** | Any user command that can be assigned keys: a tool, a core command, opening a dialog, toggling a palette, a view. Has a stable `id`. |
+| **Command** | An entry from `bimcraft_core::engine::commands()` with an `id` field; a special case of an action. |
+| **Binding** | One keyboard combination assigned to an action. |
+| **Chord** | Modifiers + one key: `Ctrl+D`, `Ctrl+Shift+D`, `Alt+F3`, `F2`. |
+| **Sequence** | Two keys without modifiers: `WA`, `MV`. Revit-style compatibility. |
+| **Physical key** | A position on the keyboard (`egui::Key` from `physical_key`) independent of the layout. `Ctrl+D` and `Ctrl+В` are one physical key `KeyD`. |
+| **Logical key** | A key taking the layout into account; for non-Latin layouts egui falls back to the physical key. |
+| **Layout** | The active OS layout (US, RU/ЙЦУКЕН, UA, DE/QWERTZ, FR/AZERTY…). |
+| **Profile** | A whole set of bindings: a default one (BIMCraft/Revit/Archicad) or a user one. |
+| **Conflict** | The same chord/sequence assigned to two different actions. |
+| **Reserved key** | A key the application does not give to bindings (Esc, Enter, Tab, Backspace, arrows, Space) or one intercepted by the OS (Alt+Tab, Alt+F4, Cmd+Tab…). |
+| **Canonical form** | A single notation of a binding in the file and in memory: the Latin name of the physical key, modifiers in the order `Ctrl+Shift+Alt+Meta+Key`. |
 
-1. **All user-facing commands must be in the registry.** The registry is the single source of truth for the dialog, Find, tooltips, and keyboard processing. It includes:
+---
 
+## 4. Functional requirements
+
+### 4.1. Completeness of the action catalog
+
+1. **All user commands must be in the registry.** The registry is the single source of truth for the dialog, Find, tooltips and keyboard handling. It includes:
    - all 170 commands from `engine::commands()`;
    - all actions from the current `shortcuts::ACTIONS`;
    - UI actions that are not core commands: Save As, Export PDF, Settings, Home, Properties, Project Browser, 3D View, Floor Plan, Section Box, Thin Lines, Dark Mode, Close Inactive, Load Family, Favorites, Materials, Project Parameters, Snap overrides, Alignment Guides, Zoom to Fit, Hide/Unhide, Temporary Hide/Isolate, Visual Style, etc.
-
-2. **No command may be lost.** Even if a command cannot be assigned (it requires mandatory parameters and has no dialog), it must appear in the dialog as a greyed-out row with the reason. Test this requirement: every `Command.id` from `engine::commands()` must either have a registry entry or be explicitly listed in an exclusion list with a reason.
-
-3. **Stable identifier.** For core commands use `cmd.<id>` (e.g. `cmd.wall`, `cmd.move`). For UI actions use `ui.<area>.<action>` (e.g. `ui.file.save_as`, `ui.palette.properties`, `ui.view.3d`). For legacy actions that are not in the core, use `legacy.<English name>`. An ID must not change when localization changes and must not depend on the label.
-
-   If a UI action is a thin wrapper around a core command (`Open`, `New`, `Save`, `Undo`, `Redo`), use `cmd.<id>` rather than creating a second `ui.*` action. Use `ui.*` only for functionality that is not in the core or for distinct behavior: Save As, Export PDF, Settings, Home, palettes, and views.
-
+2. **No command may be lost.** Even if a command cannot be assigned (it requires mandatory parameters and has no dialog), it is shown in the dialog as a greyed-out row with the reason. This requirement is checked by a test: every `Command.id` from `engine::commands()` either has an entry in the registry or is explicitly listed in the exclusion list with a reason.
+3. **Stable identifier.** For core commands — `cmd.<id>` (e.g. `cmd.wall`, `cmd.move`). For UI actions — `ui.<area>.<action>` (e.g. `ui.file.save_as`, `ui.palette.properties`, `ui.view.3d`). For legacy actions that are not in the core — `legacy.<English name>`. The ID does not change with localization and does not depend on the label.
+   If a UI action is a thin wrapper over a core command (`Open`, `New`, `Save`, `Undo`, `Redo`), use `cmd.<id>` instead of creating a second `ui.*`. `ui.*` is only for what is not in the core or for distinct behavior: Save As, Export PDF, Settings, Home, palettes, views.
 4. **Action classification:**
-
    - `Tool` — selects the active tool (`Wall`, `Door`, `Move`, `Rotate`, …);
    - `Dialog` — opens an existing dialog (`Settings`, `Visibility/Graphics`, `Filters`, `Phasing`, …);
-   - `Immediate` — executes immediately without mandatory parameters (`Zoom to Fit`, `Thin Lines`, `Undo`, `Redo`, `Save`, …);
-   - `Input` — requires mandatory data (file path, points, parameters); assignable only if the command has an existing UI parameter collector; otherwise mark it as "requires parameters";
-   - `Internal` — not a user-facing command (autosave, recover, cross-check export, etc.); displayed but not assignable.
+   - `Immediate` — runs at once without mandatory parameters (`Zoom to Fit`, `Thin Lines`, `Undo`, `Redo`, `Save`, …);
+   - `Input` — requires mandatory data (a file path, points, parameters); assignable only if the command has an existing UI parameter collector, otherwise marked "requires parameters";
+   - `Internal` — not a user command (autosave, recover, cross-check export, etc.); shown but not assignable.
+5. **One ID — one executor.** A test checks that IDs are unique and that every assignable action has a working executor (`execute_action` returns `true`).
+6. **Duplicate names are allowed, duplicate IDs are not.** For example, `column` and `structural_column` share the alias `CL`; they are different actions with different IDs, and the contextual choice of `CL` remains a separate rule.
 
-5. **One ID — one executor.** A test verifies ID uniqueness and that every assignable action has a working executor (`execute_action` returns `true`).
+### 4.2. Bindings: several per action
 
-6. Duplicate labels are allowed; duplicate IDs are not. For example, `column` and `structural_column` share the alias `CL`; they are different actions with different IDs, and contextual `CL` selection remains a separate rule.
-
-### 4.2. Bindings: Multiple per Action
-
-1. An action may have **0, 1, or many** bindings. The limit is 32 bindings per action (protection against garbage); the global limit is 4096 bindings.
-2. Bindings for one action are displayed in insertion order: built-in bindings first, then user-defined bindings.
+1. An action may have **0, 1 or many** bindings. The upper limit is 32 bindings per action (protection against junk); the overall limit is 4096 bindings.
+2. The bindings of one action are shown as a list in the order they were added: defaults first, then user ones.
 3. The user can:
    - add a binding;
-   - delete one binding;
+   - remove one binding;
    - replace a binding;
-   - delete all bindings for an action (the action remains without keys);
-   - reset an action to its built-in bindings;
+   - remove all bindings of an action (the action stays without keys);
+   - reset the action to its default bindings;
    - reset a category/all actions to the selected profile.
-4. Built-in bindings can be overridden and deleted. If the user deletes a built-in binding, it must not reappear automatically.
-5. Priority: user-defined and built-in bindings have equal priority during lookup; conflicts between them are not allowed (see 4.3).
-6. The same binding **cannot** belong to two actions. When assignment is attempted, show a conflict: "`Ctrl+D` is already assigned to 'Move'. Replace it?" Options: "Replace" (remove it from the previous action) or "Cancel".
-7. If a conflict is found while importing a file, skip that line and report its line number, action, and conflicting action. The first valid line in the file wins.
-8. If an action is unavailable in the current context (nothing selected, a different view is open), the key is still **consumed** and the status "Unavailable: <reason>" is displayed; it must not unexpectedly execute another command.
-
+4. Default bindings can be overridden and deleted. If the user deleted a default binding, it does not come back by itself.
+5. Priority: a user binding and a default binding are equal when searching; a conflict between them is not allowed (see 4.3).
+6. The same binding **cannot** belong to two actions. On an attempted assignment a conflict is shown: "`Ctrl+D` is already assigned to 'Move'. Replace?" Options: "Replace" (remove it from the previous action) or "Cancel".
+7. If a conflict is found during file import, the line is skipped and the report states the line number, the action and the conflicting action. The first valid line in the file wins.
+8. If an action is unavailable in the current context (nothing selected, another view open), the key is still "consumed" and shows the status "Unavailable: <reason>"; it must not unexpectedly run another command.
 
 ### 4.3. Chord model and exact matching
 
 1. A chord consists of:
-   - the primary modifier `Ctrl` (on macOS — `Cmd`; in the file `Ctrl` means "primary", see 4.4);
+   - the main modifier `Ctrl` (on macOS — `Cmd`; in the file `Ctrl` means "primary", see 4.4);
    - `Shift`;
    - `Alt` / `Option`;
-   - `Meta` / `Cmd` — literal Command on macOS (`Modifiers::mac_cmd`); on Windows/Linux the Win/Super key is usually intercepted by the OS and does not reach egui, so `Meta` does not work there (the UI warns);
+   - `Meta` / `Cmd` — the literal Command on macOS (`Modifiers::mac_cmd`); on Windows/Linux the Win/Super key is usually intercepted by the OS and does not reach egui, so `Meta` does not work there (the UI warns);
    - one key.
-2. **Modifier matching is exact.** `Ctrl+D` and `Ctrl+Shift+D` are different bindings and can coexist. You cannot use `egui::InputState::consume_key` as is: it applies `Modifiers::matches_logically`, which ignores extra `Shift`/`Alt` and may fire `Ctrl+D` while `Ctrl+Shift+D` is held. You must compare with `Modifiers::matches_exact` (taking `command`/`mac_cmd` into account) and consume only the exact event.
-3. **Order of modifiers in canonical form:** `Ctrl`, `Shift`, `Alt`, `Meta`, then the key. Example: `Ctrl+Shift+Alt+Meta+D`. The displayed order may be platform-specific (`Cmd+Shift+D` on macOS).
+2. **Modifier matching is exact.** `Ctrl+D` and `Ctrl+Shift+D` are different bindings and can coexist. `egui::InputState::consume_key` cannot be used as is: it applies `Modifiers::matches_logically`, which ignores extra `Shift`/`Alt` and may run `Ctrl+D` while `Ctrl+Shift+D` is pressed. Compare `Modifiers::matches_exact` (taking `command`/`mac_cmd` into account) and consume only the exact event.
+3. **Modifier order in canonical form:** `Ctrl`, `Shift`, `Alt`, `Meta`, then the key. Example: `Ctrl+Shift+Alt+Meta+D`. The displayed order may be platform-specific (`Cmd+Shift+D` on macOS).
 4. **A modifier key by itself** (Ctrl, Shift, Alt, Cmd) is not a binding.
-5. **Key repeat is ignored:** holding `Ctrl+D` must not trigger "Move" multiple times. Use only events with `pressed: true, repeat: false`.
-6. **CapsLock and NumLock** do not affect the physical key. Numpad keys are considered separate if egui distinguishes them; otherwise the common `Num0..Num9` are used.
-7. **A single key without modifiers** is allowed only for keys that do not participate in sequences: `F1`–`F24`, `Delete`, `Insert`, `Home`, `End`, `PageUp`, `PageDown`, `PrintScreen`, etc. Single **letters and digits** without modifiers are forbidden: otherwise `D` would fire immediately and make the sequences `DR`, `DW`, `DI` impossible. The UI explains the reason for rejection.
-8. **AltGr.** On Windows AltGr arrives as `Ctrl+Alt`; chords with `Ctrl+Alt` are allowed, but the UI warns that on some layouts AltGr may be intercepted by the OS/driver. If in the same frame there is an `Event::Text` generated by AltGr and focus is in a text field — the text field has priority.
+5. **Key repeat is ignored:** holding `Ctrl+D` must not launch "Move" repeatedly. Use only events with `pressed: true, repeat: false`.
+6. **CapsLock and NumLock** do not affect the physical key. Numpad keys are considered separate if egui distinguishes them; otherwise the generic `Num0..Num9` are used.
+7. **A single key without modifiers** is allowed only for keys that do not participate in sequences: `F1`–`F24`, `Delete`, `Insert`, `Home`, `End`, `PageUp`, `PageDown`, `PrintScreen`, etc. Single **letters and digits** without modifiers are forbidden: otherwise `D` would fire immediately and make the sequences `DR`, `DW`, `DI` impossible. The UI explains the reason for the refusal.
+8. **AltGr.** On Windows AltGr arrives as `Ctrl+Alt`; chords with `Ctrl+Alt` are allowed, but the UI warns that on some layouts AltGr may be intercepted by the OS/driver. If the same frame contains an `Event::Text` generated by AltGr and the focus is in a text field — the text field wins.
 
 ### 4.4. Layout independence
 
-This is a key requirement.
+This is the key requirement.
 
 1. **The source of truth is the physical key.** In `egui 0.36` the `Event::Key` event contains:
-   - `key: Key` — the logical key; for non-Latin layouts egui falls back to the physical one;
-   - `physical_key: Option<Key>` — the physical position, independent of layout;
+   - `key: Key` — the logical key; for non-Latin layouts egui falls back to the physical key;
+   - `physical_key: Option<Key>` — the physical position, independent of the layout;
    - `modifiers: Modifiers`;
    - `repeat: bool`.
-     For bindings use `physical_key.unwrap_or(key)`. This gives `Ctrl+D` == `Ctrl+В` on ЙЦУКЕН, `Ctrl+D` == `Ctrl+D` on QWERTZ (US D position), and identical behavior when switching layout during work.
-2. **Never use `Event::Text` for chords and sequences.** `Event::Text` depends on layout and gives `ЦФ` instead of `WA`, `в` instead of `d`. Text is needed only for input into text fields and for typing length/numbers in tools.
-3. **Canonical storage — Latin names of physical keys.** In memory and on export, `Ctrl+D` is `physical_key = Key::D`, regardless of what is printed on the key. On ЙЦУКЕН the same key is labeled `В`.
-4. **Import accepts localized letters.** `Ctrl+В` in a file is recognized as `Ctrl+D` via the ЙЦУКЕН table (Appendix C). `Ctrl+С` (Cyrillic `С`) → `Ctrl+C`, `Ctrl+М` → `Ctrl+V`, `Ctrl+А` → `Ctrl+F`, `Ctrl+Ф` → `Ctrl+A`, etc. Similar tables can be added for Ukrainian and other layouts; the minimum per the ТЗ is Russian.
-5. **Display.** In the interface show the canonical form `Ctrl+D`; if the interface language is Russian (or showing localized labels is enabled), show `Ctrl+D (Ctrl+В)` in the dialog and hint. In compact places (menu, Find) — canonical form only.
-6. **Changing layout during work** does not change bindings and does not require a restart.
-7. **Limitation for non-Latin and non-ЙЦУКЕН layouts.** The physical position is the US keyboard position. On AZERTY/QWERTZ a user who thinks about the letter on their key may see a mismatch with the label. This is a deliberate decision: the user requirement is "the same button on different layouts". In the hint write "physical key D (on ЙЦУКЕН — В)".
+   For bindings use `physical_key.unwrap_or(key)`. This makes `Ctrl+D` == `Ctrl+В` on ЙЦУКЕН, `Ctrl+D` == `Ctrl+D` on QWERTZ (the US D position), and gives identical behavior when switching layouts while running.
+2. **Never use `Event::Text` for chords and sequences.** `Event::Text` depends on the layout and produces `ЦФ` instead of `WA`, `в` instead of `d`. Text is needed only for input into text fields and for typing lengths/numbers in tools.
+3. **Canonical storage uses Latin names of physical keys.** In memory and on export, `Ctrl+D` is `physical_key = Key::D`, regardless of what is printed on the key. On ЙЦУКЕН the same key is labeled `В`.
+4. **Import accepts localized letters.** `Ctrl+В` in a file is recognized as `Ctrl+D` via the ЙЦУКЕН table (Appendix C). `Ctrl+С` (Cyrillic `С`) → `Ctrl+C`, `Ctrl+М` → `Ctrl+V`, `Ctrl+А` → `Ctrl+F`, `Ctrl+Ф` → `Ctrl+A`, etc. Similar tables can be added for Ukrainian and other layouts; the minimum per this spec is Russian.
+5. **Display.** The UI shows the canonical form `Ctrl+D`; if the UI language is Russian (or showing localized labels is enabled), show `Ctrl+D (Ctrl+В)` in the dialog and tooltip. In compact places (menus, Find) — the canonical form only.
+6. **Switching the layout while running** does not change bindings and does not require a restart.
+7. **Limitation for non-Latin and non-ЙЦУКЕН layouts.** The physical position is the US keyboard position. On AZERTY/QWERTZ a user who thinks in terms of the letter printed on their key may see a mismatch with the label. This is a deliberate decision: the user's requirement is "the same button on different layouts". The tooltip should say "physical key D (on ЙЦУКЕН — В)".
 8. **A test is mandatory:** an event with `physical_key = Some(Key::D), modifiers = Ctrl`, regardless of `text = "в"` / `text = "d"` / no text, must perform the same action.
 
 ### 4.5. Sequences (Revit-style compatibility)
 
 1. A sequence is two keys without `Ctrl`/`Alt`/`Meta` (Shift is allowed but does not change the key). Example: `W`, then `A`.
 2. Sequences are read from physical keys, not from `Event::Text`. This fixes `WA` on the Russian layout.
-3. The sequence buffer:
-   - holds no more than 2 keys;
-   - is reset by `Esc`, on mouse click, tool change, opening a modal dialog/menu, after a binding fires;
-   - is reset by an inactivity timeout (recommended 2 seconds) so that an old letter does not "stick" to a new command;
-   - does not intercept digits/period if the tool is waiting for length input (`typed_length`).
-4. A sequence can be assigned to any action on par with a chord. In the dialog it is displayed as `WA` (without `+`).
+3. Sequence buffer:
+   - holds at most 2 keys;
+   - is cleared by `Esc`, on a mouse click, a tool change, opening a modal dialog/menu, and after a binding fires;
+   - is cleared by an inactivity timeout (2 seconds recommended) so that an old letter does not "stick" to a new command;
+   - does not intercept digits/period when the tool is waiting for a length (`typed_length`).
+4. A sequence can be assigned to any action on equal terms with a chord. In the dialog it is displayed as `WA` (without `+`).
 5. One sequence cannot be assigned to two actions; a conflict is handled the same way as for a chord.
-6. Old two-letter bindings from `SHORTCUTS`, command aliases and `custom_shortcuts` migrate into sequences without loss of behavior.
+6. The old two-letter bindings from `SHORTCUTS`, command aliases and `custom_shortcuts` migrate to sequences without behavior loss.
 
 ### 4.6. Context, priority and key consumption
 
-Keyboard processing order (top to bottom, the first level that fires wins):
+Keyboard handling order (top to bottom, the first level that fires wins):
 
-1. **OS/window.** Combinations intercepted by the OS (Alt+Tab, Alt+F4, Cmd+Tab, Cmd+Space, Win+L, etc.) do not reach the application; the application cannot rebind them.
-2. **Modal dialog.** While a modal dialog is open, only its local keys work (`Esc`, `Enter`, navigation) and the capture mode in the hotkeys dialog. Global bindings do not fire.
+1. **OS/window.** Combinations intercepted by the OS (Alt+Tab, Alt+F4, Cmd+Tab, Cmd+Space, Win+L, etc.) do not reach the application; the application cannot reassign them.
+2. **Modal dialog.** While a modal dialog is open, only its local keys (`Esc`, `Enter`, navigation) and the capture mode in the keyboard shortcuts dialog work. Global bindings do not fire.
 3. **Text input.** If `ctx.egui_wants_keyboard_input()` is true (input field, search, name editor, numeric field), all configurable bindings are disabled. The exception is "global" actions that do not steal text:
    - `Save`, `Save As`, `Open`, `New`, `Find`, `Settings` — allowed;
-   - `Undo`/`Redo` in a text field remain with the field (undo of text typing), not with the model;
+   - `Undo`/`Redo` in a text field stay with the field (undoing typed text), not with the model;
    - `Ctrl+C`/`Ctrl+V`/`Ctrl+X`/`Ctrl+A` always belong to the text field.
 4. **Open menu/popup.** Navigation and `Esc` belong to the menu. After the menu closes, bindings work again.
-5. **Tool input.** If the active tool is waiting for a number/point/length, digits, `.` and `,` go to `typed_length`; `Enter` completes the input. Chords with modifiers can still work if they do not conflict with input.
+5. **Tool input.** If the active tool is waiting for a number/point/length, digits, `.` and `,` go to `typed_length`; `Enter` completes the input. Chords with modifiers may still work if they do not conflict with the input.
 6. **Chords.** Exact match by `physical_key` + `Modifiers::matches_exact`.
-7. **Sequences.** If the chord did not fire and there are no modifiers (except Shift), the key goes into the sequence buffer.
-8. **Tool context keys.** `Esc`, `Enter`, `Tab`, `Backspace`, arrows, `Space` — are reserved (see 4.10) and are always handled by the tool; an action cannot be assigned to them.
-9. **Sketch mode.** While a sketch is active, `Ctrl+Z` undoes the last sketch line, not a model step (as now in `keys()`); `Ctrl+Shift+Z`/`Ctrl+Y` in a sketch must not undo the model. This context rule has priority over the general Undo/Redo binding.
+7. **Sequences.** If no chord fired and there are no modifiers (except Shift), the key goes to the sequence buffer.
+8. **Contextual tool keys.** `Esc`, `Enter`, `Tab`, `Backspace`, arrows, `Space` — reserved (see 4.10) and always handled by the tool; an action cannot be assigned to them.
+9. **Sketch mode.** While a sketch is active, `Ctrl+Z` undoes the last sketch line rather than a model step (as now in `keys()`); `Ctrl+Shift+Z`/`Ctrl+Y` in a sketch must not undo the model. This contextual rule takes precedence over the global Undo/Redo binding.
 
 Additionally:
 
-- One press is consumed exactly once. After a binding fires, the event is removed from `InputState.events` (or marked as consumed) so that other handlers do not perform the same command.
-- A chord resets the sequence buffer.
-- If a binding is assigned but the action is unavailable, the key is consumed and a status is shown; there is no fallback to a sequence/another command.
-- `Ctrl+Shift+...` must not fire as `Ctrl+...`: the check order must not mask a more specific chord. Better to look up an exact match in a hash table rather than iterate from "weak" to "strong".
+- One key press is consumed exactly once. After a binding fires, the event is removed from `InputState.events` (or marked consumed) so that other handlers do not run the same command.
+- A chord clears the sequence buffer.
+- If a binding is assigned but the action is unavailable, the key is consumed and the status is shown; there is no fallback to a sequence/another command.
+- `Ctrl+Shift+...` must not fire as `Ctrl+...`: the check order must not mask a more specific chord. It is better to look up an exact match in a hash table than to iterate from "weak" to "strong".
 
-### 4.7. "Keyboard Shortcuts" dialog
+### 4.7. The "Keyboard Shortcuts" dialog
 
 The existing `shortcuts_window` is replaced/extended. Opening: Manage > Shortcuts, the Shortcuts button, Find, by default `KS` (sequence) and/or `Ctrl+Shift+K` (if it is decided to keep a chord; it may be left unassigned).
 
-#### 4.7.1. General structure
+#### 4.7.1. Overall structure
 
-- Modal window, width ~720–780 px, height up to 80% of the window.
+- A modal window, about 720–780 px wide, up to 80% of the window height.
 - Top panel:
-  - search field (by localized name, English name, ID, binding);
-  - filter: "All", "Assigned", "Without keys", "Modified", "Conflicts";
-  - filter by category (Architecture, Structures, Views, Manage, File, Palettes, Snaps, MEP, Annotations, All);
-  - profile selection: "BIMCraft", "Revit-like", "Archicad-like", "Empty";
-  - buttons "Import…", "Export…", "Help (Markdown)…", "Reset…".
-- The "Help (Markdown)…" button stands next to export and immediately opens saving of the Markdown cheat sheet (see 4.8.4); this is the main "simple way to get acquainted" with all combinations.
+  - a search field (by localized name, English name, ID, binding);
+  - a filter: "All", "Assigned", "Without keys", "Changed", "Conflicts";
+  - a category filter (Architecture, Structure, Views, Manage, File, Palettes, Snaps, MEP, Annotations, All);
+  - a profile choice: "BIMCraft", "Revit-like", "Archicad-like", "Empty";
+  - buttons "Import…", "Export…", "Reference (Markdown)…", "Reset…".
+- The "Reference (Markdown)…" button sits next to export and immediately opens saving of the Markdown cheat sheet (see 4.8.4); this is the main "simple way to get acquainted" with all combinations.
 - Table:
-  - "Command" column — localized name + ID in small font;
-  - "Category" column;
-  - "Combinations" column — chips/buttons, each with `×`; a `+` button to add;
-  - "Source" column — "default", "user", "modified";
-  - "Actions" column — "Reset" / "Delete all".
-- Bottom panel: counter "Assigned X of Y", "Conflicts: N", buttons "Cancel", "Apply".
-- Changes in the dialog **accumulate** and are applied on "Apply"; "Cancel"/`Esc` rolls back. After "Apply" the settings are saved immediately to `settings.json` (via the common `keep_settings` mechanism).
+  - the "Command" column — the localized name + the ID in a small font;
+  - the "Category" column;
+  - the "Combinations" column — chips/buttons, each with `×`; a `+` button to add;
+  - the "Source" column — "default", "custom", "changed";
+  - the "Actions" column — "Reset" / "Remove all".
+- Bottom panel: a counter "Assigned X of Y", "Conflicts: N", buttons "Cancel", "Apply".
+- Changes in the dialog **accumulate** and are applied on "Apply"; "Cancel"/`Esc` rolls back. After "Apply" the settings are saved to `settings.json` immediately (through the common `keep_settings` mechanism).
 - If there are unsaved changes, closing the window/`Esc` asks for confirmation.
 
 #### 4.7.2. Adding and editing a binding
@@ -328,10 +328,10 @@ The existing `shortcuts_window` is replaced/extended. Opening: Manage > Shortcut
 - The `+` button next to an action opens a capture field: "Press a combination…".
 - In the capture field:
   - pressing `Ctrl+D` shows `Ctrl+D`; on the Russian layout additionally `(Ctrl+В)`;
-  - pressing a key labeled `А` on ЙЦУКЕН will be recorded as `Ctrl+F` and show `(Ctrl+А)`: this is the physical key `F`, not the Latin `A`;
+  - pressing the key labeled `А` on ЙЦУКЕН is recorded as `Ctrl+F` and shows `(Ctrl+А)`: this is the physical key `F`, not the Latin `A`;
   - pressing two keys without modifiers (`W`, `A`) shows `WA` and creates a sequence;
-  - `Esc` cancels capture;
-  - `Backspace` clears capture;
+  - `Esc` cancels the capture;
+  - `Backspace` clears the capture;
   - `Tab`/`Enter` are not considered a binding;
   - pressing only a modifier is ignored with a hint;
   - a conflict is shown immediately, before saving, with the name of the owning action and a "Replace" button;
@@ -342,30 +342,30 @@ The existing `shortcuts_window` is replaced/extended. Opening: Manage > Shortcut
 
 #### 4.7.3. Search, filters and sorting
 
-- Search is case-insensitive; it searches by:
-  - localized name;
-  - English name;
-  - ID (`cmd.move`, `ui.file.save_as`);
-  - binding string (`Ctrl+D`, `WA`, `В`).
+- Search is case-insensitive; it looks through:
+  - the localized name;
+  - the English name;
+  - the ID (`cmd.move`, `ui.file.save_as`);
+  - the binding string (`Ctrl+D`, `WA`, `В`).
 - An empty search shows everything.
-- Default sorting: category, then localized name. You can sort by name/ID/number of bindings.
-- Rows without bindings are visually dimmed but not hidden, unless the filter is "Without keys".
-- Conflicting rows are highlighted with the error color; clicking a conflict leads to the second participant.
+- Default sorting: category, then localized name. Sorting by name/ID/number of bindings is also possible.
+- Rows without bindings are visually dimmed but not hidden unless the filter is "Without keys".
+- Conflicting rows are highlighted with the error color; clicking a conflict jumps to the second participant.
 
 #### 4.7.4. Reset
 
-- "Reset action" — restore the start bindings of the selected action.
-- "Reset category" — restore the start bindings of all actions in the category.
-- "Reset all" — restore the start profile (BIMCraft by default), with confirmation.
+- "Reset action" — restore the default bindings of the selected action.
+- "Reset category" — restore the default bindings of all actions in the category.
+- "Reset all" — restore the default profile (BIMCraft by default), with confirmation.
 - "Clear all" — leave all actions without keys (for those who want to start from scratch), with confirmation.
 - Reset does not touch other application settings.
 
 #### 4.7.5. Applying a profile
 
-- Selecting a profile shows a preview: how many bindings will be added/changed/removed.
+- Choosing a profile shows a preview: how many bindings will be added/changed/removed.
 - Applying a profile replaces all current bindings with the selected set (after confirmation).
 - Profiles: `BIMCraft` (default), `Revit-like`, `Archicad-like`, `Empty`.
-- A custom profile is saved as "Custom" after any change.
+- The user profile is saved as "Custom" after any change.
 
 ### 4.8. Import and export
 
@@ -373,90 +373,89 @@ The existing `shortcuts_window` is replaced/extended. Opening: Manage > Shortcut
 
 1. The "Export…" button opens the system save dialog.
 2. Formats:
-   - main — text `.txt` / `.bks` (BIMCraft Keyboard Shortcuts), UTF-8, suitable for re-import;
+   - the main one — text `.txt` / `.bks` (BIMCraft Keyboard Shortcuts), UTF-8, suitable for re-import;
    - additionally — `.json` (the same model, convenient for scripts, suitable for re-import);
-   - **`.md` — Markdown help/cheat sheet** for reading, printing and passing to a colleague (see 4.8.4); this is **not** a backup format and not an import format;
-   - optionally — Revit XML (sequences only; chords are not representable, warn on export).
+   - **`.md` — a Markdown reference/cheat sheet** for reading, printing and handing to a colleague (see 4.8.4); this is **not** a backup format and not an import format;
+   - optionally — Revit XML (sequences only; chords cannot be represented, warn on export).
 3. Export modes:
-   - **whole profile** (all actions, including start and empty) — by default;
-   - **only user changes** (actions whose bindings differ from the start profile).
+   - **the whole profile** (all actions, including default and empty ones) — by default;
+   - **only user changes** (actions whose bindings differ from the default profile).
 4. Export is deterministic: the same state → the same file (no random order, no timestamp in the content; the application version — in a comment, if needed).
 5. Writing is atomic: first a temporary file, then `rename`. A write error must not corrupt the existing file.
 6. Default name: `bimcraft-shortcuts.txt`; on repeated export — the last chosen path (stored in settings, optionally).
 
 #### 4.8.2. Import
 
-1. The "Import…" button opens the system file selection dialog.
+1. The "Import…" button opens the system file picker.
 2. Supported formats:
    - the new text format `.txt` / `.bks` (section 5);
    - JSON (`{"version": 2, "bindings": [...]}` or the old `{"WA": "Wall"}`);
-   - Revit XML strings `<Shortcut CommandName="…" Shortcuts="WA#W1"/>`;
-   - legacy strings `WA - Wall`, `WA = Wall`, `WA: Wall`.
-   - **Markdown `.md` is not supported**: it is a help for reading (4.8.4). If `.md` is selected, show a message and do not change settings.
+   - Revit XML lines `<Shortcut CommandName="…" Shortcuts="WA#W1"/>`;
+   - legacy lines `WA - Wall`, `WA = Wall`, `WA: Wall`.
+   - **Markdown `.md` is not supported**: it is a reference for reading (4.8.4). If `.md` is chosen, show a message and do not change settings.
 3. Import modes:
-   - **Replace all** — current bindings are replaced by the file contents; actions absent from the file remain without keys. This is the default mode for a file with `version = 2`.
+   - **Replace all** — the current bindings are replaced by the file contents; actions absent from the file are left without keys. This is the default mode for a file with `version = 2`.
    - **Add/merge** — valid bindings from the file are added to the current ones; conflicts are skipped with a report.
 4. Before applying, a preview is shown:
    - how many bindings will be added, replaced, skipped;
    - a list of errors with line numbers and reasons;
    - a list of conflicts;
    - a warning if the file is empty or contains no valid bindings.
-5. Application is atomic: first full parsing and validation, then replacement in memory, then saving `settings.json`. If saving fails — roll back in memory and show an error.
+5. Applying is atomic: first a full parse and validation, then replacement in memory, then saving `settings.json`. If saving failed — roll back in memory and show an error.
 6. Before replacement, save a backup of the current profile next to the settings (`shortcuts.bak`) or in the settings folder with a date.
-7. Limits: file no more than 256 KiB, no more than 10,000 lines, no more than 4096 bindings. Exceeding — refusal with a message, without partial application.
-8. Errors do not "break" the import entirely: valid lines are applied, invalid ones are listed. The exception is a file version/structure error: then nothing is applied.
+7. Limits: a file of at most 256 KiB, at most 10,000 lines, at most 4096 bindings. Exceeding — refusal with a message, without partial application.
+8. Errors do not "break" the import as a whole: valid lines are applied, invalid ones are listed. The exception is a file version/structure error: then nothing is applied.
 9. Import does not execute any code from the file: data only.
 
-#### 4.8.3. "Export → import" check
+#### 4.8.3. The "export → import" check
 
-- Export → import in "Replace all" mode must give a semantically identical set of bindings (the order within an action is preserved, the order of actions may be canonicalized).
-- A repeated export after import gives the same text (determinism).
-- `Ctrl+В` on import is canonicalized to `Ctrl+D`; on export it is written as `Ctrl+D`. This is not a loss: both records mean one physical key.
+- Export → import in "Replace all" mode must produce a semantically identical set of bindings (the order within an action is preserved; the order of actions may be canonicalized).
+- Re-exporting after import produces the same text (determinism).
+- `Ctrl+В` on import is canonicalized to `Ctrl+D`; on export `Ctrl+D` is written. This is not a loss: both records mean one physical key.
 
-#### 4.8.4. Exporting help to Markdown
+#### 4.8.4. Exporting the reference to Markdown
 
 This is a separate, **human-readable** export: it does not replace `.bks`/`.json` and is not intended for re-import.
 
-1. **Purpose.** Give the user a simple way to see all combinations that exist in the program: effective, start (built-in), user, as well as commands without keys. The resulting `.md` can be opened in any Markdown viewer, printed, put in a repository or passed to a colleague.
-2. **Entry point.** The "Help (Markdown)…" button in the hotkeys dialog (next to "Export…"), as well as the "Markdown (help)" item in the general export dialog.
-3. **What goes into the help:**
-   - **all registry actions** — all 170 core commands and all interface actions, including those with no bindings at all;
-   - **effective bindings** (what will actually fire now);
-   - **start bindings** (built-in values, even if the user changed or deleted them) — in a separate column or section;
+1. **Purpose.** To give the user a simple way to see all combinations that exist in the program: active, default (built-in), custom, as well as commands without keys. The resulting `.md` can be opened in any Markdown viewer, printed, put into a repository or handed to a colleague.
+2. **Entry point.** The "Reference (Markdown)…" button in the keyboard shortcuts dialog (next to "Export…"), as well as the "Markdown (reference)" item in the general export dialog.
+3. **What goes into the reference:**
+   - **all registry actions** — all 170 core commands and all UI actions, including those with no binding at all;
+   - **active bindings** (what will actually fire now);
+   - **default bindings** (the built-in values, even if the user changed or deleted them) — in a separate column or section;
    - the localized action name, the English name and the stable ID;
-   - category and/or menu path (`Architecture > Wall`, `Manage > Link Model`);
-   - source: "default", "user", "modified", "deleted";
+   - the category and/or menu path (`Architecture > Wall`, `Manage > Link Model`);
+   - the source: "default", "custom", "changed", "deleted";
    - for actions without keys — an explicit "not assigned" mark;
    - conflicts (if any) and reserved/system combinations;
-   - profile, format/application version, generation date and platform;
-   - for Russian — localized hints like `Ctrl+D (Ctrl+В)`.
+   - the profile, the format/application version, the generation date and the platform;
+   - for Russian — localized hints of the form `Ctrl+D (Ctrl+В)`.
 4. **File structure:**
-   - heading `# BIMCraft — keyboard shortcuts`;
-   - a short "how to read" instruction and a table of contents;
-   - sections by category (File, Edit, Architecture, Structures, Views, Manage, Palettes, Snaps, MEP, Annotations, Other);
+   - the heading `# BIMCraft — keyboard shortcuts`;
+   - a brief "how to read" instruction and a table of contents;
+   - sections by category (File, Edit, Architecture, Structure, Views, Manage, Palettes, Snaps, MEP, Annotations, Other);
    - within a section — a table:
-     `| Command | ID | Effective | Start | Source | Note |`;
-   - a separate section "Commands without keys" — so they are visible and can be assigned;
+     `| Command | ID | Active | Default | Source | Note |`;
+   - a separate section "Commands without keys" — so that they are visible and can be assigned;
    - a separate section "Reserved and system combinations";
-   - a separate section "Conflicts" — only if they exist, indicating both actions.
+   - a separate section "Conflicts" — only if there are any, naming both actions.
 5. **Export options:**
-   - include commands without keys — **yes** by default;
-   - include start bindings — **yes** by default;
-   - only effective bindings / only user changes — optionally;
-   - include bindings of other start profiles (Revit-like, Archicad-like, Empty) — optionally, as a separate section "Other profiles";
-   - label language — interface language by default, English can be chosen;
-   - `Ctrl+D (Ctrl+В)` hints — yes by default for the Russian interface.
+   - include commands without keys — by default **yes**;
+   - include default bindings — by default **yes**;
+   - only active bindings / only user changes — optionally;
+   - include bindings of other default profiles (Revit-like, Archicad-like, Empty) — optionally, as a separate section "Other profiles";
+   - the language of labels — the UI language by default, English can be chosen;
+   - `Ctrl+D (Ctrl+В)` hints — yes by default for the Russian UI.
 6. **Determinism.** The same state → the same `.md` (sorting by category, then by localized name/ID; no random order). The generation date may be in the header but must not affect profile comparison; for diffs, provide an option "without date".
-7. **Valid Markdown.** Tables with `|` escaped in names, no raw HTML, with proper headings and anchors. The file must open correctly in GitHub, VS Code, Obsidian and a regular viewer.
+7. **Valid Markdown.** Tables with `|` escaped in names, no raw HTML, proper headings and anchors. The file must open correctly in GitHub, VS Code, Obsidian and an ordinary viewer.
 8. **Writing** — UTF-8, atomic (temporary file + `rename`), default name `bimcraft-shortcuts.md`.
-9. **Import of `.md` is not supported.** If the user selects `.md` in the import dialog, show a message: "This is a help for reading. For import use `.bks`, `.txt` or `.json`". This protects against an attempt to "load the help" and lose settings.
-10. **Single source.** The help is generated from the same action registry and the same `Shortcuts` state as the dialog, so it cannot diverge from it. A test verifies that every registry action is included in the `.md`.
-11. **Not mandatory, but a useful bonus:** a "Preview" button in the dialog showing the same Markdown in a built-in scrollable window (without saving). This covers the "just look" scenario without creating a file.
+9. **Importing `.md` is not supported.** If the user chooses `.md` in the import dialog, show the message: "This is a reference for reading. To import, use `.bks`, `.txt` or `.json`". This protects against an attempt to "load the reference" and lose the settings.
+10. **Single source.** The reference is generated from the same action registry and the same `Shortcuts` state as the dialog, so it cannot diverge from it. A test checks that every registry action got into the `.md`.
+11. **Not required, but a useful bonus:** a "Preview" button in the dialog showing the same Markdown in a built-in scrollable window (without saving). This covers the "just take a look" scenario without creating a file.
 
 ### 4.9. Settings storage and migration
 
-1. `Settings.shortcuts` changes type from `BTreeMap<String, String>` to a structure:
-
+1. `Settings.shortcuts` changes its type from `BTreeMap<String, String>` to a structure:
    ```json
    "shortcuts": {
      "version": 2,
@@ -467,61 +466,61 @@ This is a separate, **human-readable** export: it does not replace `.bks`/`.json
      ]
    }
    ```
-2. The settings file stores the **full effective set** of bindings (not only differences from the start ones). This makes behavior predictable when the program is updated: start bindings do not "creep back in".
+2. The settings file stores the **full effective set** of bindings (not just the differences from the defaults). This makes behavior predictable when the program is updated: default bindings do not "creep back".
 3. `shortcuts.version`:
    - `2` — the new format;
-   - absent or an object without `version` — the old format `{"WA": "Wall"}`.
-4. Migration of the old format:
+   - missing, or an object without `version` — the old format `{"WA": "Wall"}`.
+4. Migrating the old format:
    - each `key → action` pair turns into a sequence (`WA` → `WA`);
    - the action name is resolved to an ID via the registry (English/localized name);
-   - unknown actions are skipped with a log entry (without breaking loading);
+   - unknown actions are skipped and logged (without breaking the load);
    - after the first successful load the settings are rewritten in version 2.
-5. Increase `MAX_SHORTCUTS` to 4096 bindings; `MAX_ACTIONS` — 512. Increase `settings.rs::MAX_FILE` from 64 KiB to 1 MiB (or 512 KiB): 4096 bindings in JSON do not fit in 64 KiB, otherwise the settings will be silently unreadable.
-6. A corrupted/too large `settings.json` must not erase settings: keep the last successful copy in memory, show the status, do not rewrite the file until the user acts.
+5. Increase `MAX_SHORTCUTS` to 4096 bindings; `MAX_ACTIONS` — 512. Increase `settings.rs::MAX_FILE` from 64 KiB to 1 MiB (or 512 KiB): 4096 bindings in JSON do not fit into 64 KiB, otherwise the settings will be silently unreadable.
+6. A corrupt/oversized `settings.json` must not wipe the settings: keep the last successful copy in memory, show a status, and do not overwrite the file until the user acts.
 7. New/Open do not touch bindings: these are application settings.
 8. `use_settings` loads bindings into `BimApp::shortcuts`; `settings_now`/`keep_settings` save them.
-9. Backward compatibility: if a new version of the program reads an old `settings.json`, it migrates; if an old version reads the new one — it must not crash (an unknown object is ignored, start bindings remain). This is a desirable but non-blocking requirement.
+9. Backward compatibility: if a new version of the program reads an old `settings.json`, it migrates; if an old version reads the new one, it must not crash (an unknown object is ignored, default bindings remain). This is a desirable but non-blocking requirement.
 
-### 4.10. Reserved keys and conflicts with the OS
+### 4.10. Reserved keys and OS conflicts
 
 1. **Always reserved by the application** (cannot be assigned):
    - `Esc` — cancel/close;
-   - `Enter` — complete input/construction;
+   - `Enter` — finish input/construction;
    - `Tab` — cyclic selection/focus;
    - `Backspace` — delete the last character/step;
    - arrows — navigation/movement;
-   - `Space` — tool context action (flip, rotate, size mode).
+   - `Space` — the tool's contextual action (flip, rotate, dimension mode).
 2. **Assignable, but with a warning:**
    - `Delete` (by default — the Delete command);
-   - `F1`–`F12` (some may be occupied by the OS/window);
+   - `F1`–`F12` (some may be taken by the OS/window);
    - `Ctrl+Alt+…` (AltGr);
    - `Ctrl+Shift+Esc`, `Alt+F4`, `Alt+Tab`, `Ctrl+Esc`;
    - on macOS: `Cmd+Tab`, `Cmd+Space`, `Cmd+Q`, `Cmd+H`, `Cmd+M`, `Cmd+``;
-   - on Windows: `Win+L`, `Win+D`, `Win+Tab`, `Ctrl+Alt+Del` (the latter does not reach at all).
+   - on Windows: `Win+L`, `Win+D`, `Win+Tab`, `Ctrl+Alt+Del` (the last one does not arrive at all).
 3. UI on assignment:
-   - a hard-reserved key is not accepted and the reason is explained;
+   - a hard-reserved key is not accepted, and the reason is explained;
    - an OS-conflicting one is accepted, but a yellow warning is shown: "may not work: intercepted by the system".
-4. On import such bindings:
-   - for hard-reserved — skipped with an error;
-   - for OS-conflicting — accepted with a warning.
+4. On import such bindings are:
+   - for hard-reserved ones — skipped with an error;
+   - for OS-conflicting ones — accepted with a warning.
 5. `Ctrl+D` is not reserved; it is reassigned to Move.
 
 ### 4.11. Displaying bindings in the interface
 
-1. **Ribbon and tool palette hints.** For each action with bindings the hint has the form:
+1. **Ribbon and tool palette tooltips.** For each action with bindings the tooltip has the form:
    `Move (Ctrl+D, Ctrl+Shift+M, MV)`.
    If there are no bindings — only the name and description, without empty parentheses.
-2. **Menu.** To the right of the menu item show the first (or all, if they fit) binding via egui's standard `shortcut_text`. Example: `Save   Ctrl+S`.
+2. **Menus.** To the right of a menu item show the first (or all, if they fit) binding via egui's standard `shortcut_text`. Example: `Save   Ctrl+S`.
 3. **Find (Ctrl+K).** In the action row show up to two bindings and `+N` if there are more. Search by binding also works.
 4. **Context menus.** If a context menu item corresponds to an action, show its binding.
-5. **Status bar.** After a binding fires, if the action is unavailable, show the reason. If available — show nothing extra.
+5. **Status bar.** After a binding fires, if the action is unavailable, show the reason. If it is available — show nothing extra.
 6. **Dialog.** Binding chips, conflicts, source.
-7. **Localization.** Action names — via `t()`. Keys — canonical; for the Russian layout add `(Ctrl+В)` in the dialog/hint.
-8. **No hard-coded strings** like `"Modify (MD)"`: all labels with keys are generated from the registry. Replace the existing strings in `lib.rs` (e.g. `"Modify (MD): select elements"`) with a helper.
+7. **Localization.** Action names — via `t()`. Keys — canonical; for the Russian layout add `(Ctrl+В)` in the dialog/tooltip.
+8. **No hard-coded strings** of the form `"Modify (MD)"`: all labels with keys are generated from the registry. Existing strings in `lib.rs` (e.g. `"Modify (MD): select elements"`) are replaced with a helper.
 
-### 4.12. Start profiles and `Ctrl+D`
+### 4.12. Default profiles and `Ctrl+D`
 
-> **ТЗ-009 (priority):** in the BIMCraft start profile `Ctrl+D` is **free**, Home — `Ctrl+U`. The items below about `Ctrl+D` = Move and Home = `Ctrl+Shift+H` apply only to the Archicad-like profile or to the ТЗ-008 draft.
+> **SPEC-009 (takes precedence):** in the BIMCraft default profile `Ctrl+D` is **free**, Home is `Ctrl+U`. The clauses below about `Ctrl+D` = Move and Home = `Ctrl+Shift+H` apply only to the Archicad-like profile or to the draft of SPEC-008.
 
 1. **BIMCraft (default):**
    - keeps all current two-letter Revit combinations (`WA`, `DR`, `WN`, `RM`, `CL`, `DI`, `TG`, `MV`, `CO`, `RO`, `MM`, `DM`, `AL`, `OF`, `DW`, `ZF`, `TL`, `CS`, `PP`, `NP`, `SA`, `VV`, `EH`, `HH`, `KS`, …);
@@ -533,20 +532,20 @@ This is a separate, **human-readable** export: it does not replace `.bks`/`.json
    - `Delete` = Delete;
    - `Ctrl+Z` = Undo, `Ctrl+Shift+Z` and `Ctrl+Y` = Redo;
    - `Ctrl+S` = Save, `Ctrl+Shift+S` = Save As, `Ctrl+O` = Open, `Ctrl+N` = New, `Ctrl+K` = Find, `Ctrl+,` = Settings, `Ctrl+1` = Properties, `Ctrl+P` = Export PDF.
-2. **Revit-like:** the current `SHORTCUTS` + aliases; `Ctrl+D` may be left as Home or not assigned (the profile explicitly differs from BIMCraft). The user can choose it in the dialog.
-3. **Archicad-like:** at minimum `Ctrl+D` = Move, `Ctrl+R` = Rotate, `Ctrl+M` = Mirror Pick Axis, `Ctrl+Shift+M` = Mirror Draw Axis, `Ctrl+Shift+D` = Copy, `Ctrl+Shift+O` = Offset, `Ctrl+T` = Trim, `Ctrl+0` = Zoom to Fit, `F2`/`F3` = Floor Plan/3D View. The rest — as desired; the profile does not have to be byte-for-byte like Archicad.
-4. **Empty:** no bindings; useful for a clean start.
+2. **Revit-like:** the current `SHORTCUTS` + aliases; `Ctrl+D` may be left as Home or unassigned (the profile is deliberately different from BIMCraft). The user can choose it in the dialog.
+3. **Archicad-like:** at minimum `Ctrl+D` = Move, `Ctrl+R` = Rotate, `Ctrl+M` = Mirror Pick Axis, `Ctrl+Shift+M` = Mirror Draw Axis, `Ctrl+Shift+D` = Copy, `Ctrl+Shift+O` = Offset, `Ctrl+T` = Trim, `Ctrl+0` = Zoom to Fit, `F2`/`F3` = Floor Plan/3D View. The rest — as desired; the profile does not have to match Archicad byte for byte.
+4. **Empty:** no bindings at all; useful for a clean start.
 5. All profiles are data, not code: they can be stored in a built-in resource (`include_str!`) and updated without changing the logic.
-6. Conflicts within the start profile are forbidden; a test verifies that no chord/sequence occurs twice.
-7. On the first launch after the update, show a one-time notification: "`Ctrl+D` is now 'Move'; the start page is `Ctrl+Shift+H`. You can change this in Manage > Shortcuts". Do not show the notification if the user has already opened the new dialog or changed bindings.
+6. Conflicts within a default profile are forbidden; a test checks that no chord/sequence occurs twice.
+7. On the first launch after an update, show a one-time notification: "`Ctrl+D` is now 'Move'; the start page is `Ctrl+Shift+H`. You can change this in Manage > Shortcuts". Do not show the notification if the user has already opened the new dialog or changed bindings.
 
 ### 4.13. Performance and reliability
 
-1. Binding lookup on a keypress is O(1): hash table `KeyChord → ActionId` and `[Key; 2] → ActionId`.
-2. Processing must not allocate on every keypress (except rare cases); reuse buffers.
+1. Looking up a binding on a key press is O(1): a hash table `KeyChord → ActionId` and `[Key; 2] → ActionId`.
+2. Handling must not allocate on every key press (except rare cases); reuse buffers.
 3. `settings.json` is written atomically (already implemented) and no more than once per frame.
-4. Importing 4096 bindings should take < 50 ms and not block the UI for more than one frame (if necessary — in a background thread with progress; for 4096 this is not required).
-5. An error in one binding must not break application startup: the registry and settings are loaded into a consistent state.
+4. Importing 4096 bindings must take < 50 ms and not block the UI for more than one frame (a background thread with progress if necessary; for 4096 this is not required).
+5. An error in one binding must not break application startup: the registry and settings load into a consistent state.
 
 ---
 
@@ -554,13 +553,13 @@ This is a separate, **human-readable** export: it does not replace `.bks`/`.json
 
 ### 5.1. General properties
 
-- Encoding: UTF-8; BOM is allowed and ignored.
-- Line endings: LF or CRLF; the parser normalizes.
-- Extension: `.txt` or `.bks` (same content).
+- Encoding: UTF-8; a BOM is allowed and ignored.
+- Line endings: LF or CRLF; the parser normalizes them.
+- Extension: `.txt` or `.bks` (the same content).
 - Comments: a line starting with `#` after optional spaces. Inline comments are not supported, so that `#` can be used as a key in the future.
-- Empty lines are ignored.
-- Case of action names and modifiers does not matter; the canonical form is lowercase IDs and `Ctrl+...`.
-- Maximum size: 256 KiB; maximum 10,000 lines; maximum 4096 bindings.
+- Blank lines are ignored.
+- The case of action names and modifiers does not matter; the canonical form is lowercase IDs and `Ctrl+...`.
+- Maximum size: 256 KiB; at most 10,000 lines; at most 4096 bindings.
 
 ### 5.2. Grammar
 
@@ -581,16 +580,16 @@ modifier    := "Ctrl" | "Control" | "Primary"
 key         := letter | digit | named-key | punctuation
 ```
 
-- `action` — a stable ID (`cmd.move`, `ui.file.save_as`) or the English/localized action name. ID takes priority.
-- One line — one binding. Multiple bindings for an action are given by multiple lines with the same `action`. A comma-separated list is **not supported**: `Ctrl+,` is the Settings key, and the comma cannot be a separator.
-- Legacy lines `KEY - Name` (`WA - Wall`) are read by a separate parser branch for compatibility only; in the new format the action is always to the left of `=`.
+- `action` — a stable ID (`cmd.move`, `ui.file.save_as`) or the English/localized action name. The ID takes precedence.
+- One line — one binding. Several bindings for an action are given by several lines with the same `action`. A comma-separated list is **not supported**: `Ctrl+,` is the Settings key, and a comma cannot be a separator.
+- Legacy lines `KEY - Name` (`WA - Wall`) are read by a separate parser branch only for compatibility; in the new format the action is always to the left of `=`.
 - Spaces around `=`, `:` and `+` are ignored.
-- If the line contains `+` — it is a chord.
+- If a line contains `+`, it is a chord.
 - If there is no `+`:
   - two single-letter names without a space (`WA`) or two tokens separated by a space (`W A`) — a sequence;
   - one key name (`F2`, `Delete`) — a chord without modifiers; single letters and digits are forbidden (see 4.3.7).
-- The `+` key is written as `Plus`; `Ctrl+Plus` — a chord with the "plus" key. The notation `Ctrl++` is not recommended and may be rejected as ambiguous.
-- `Ctrl` in the file means **primary**: `Ctrl` on Windows/Linux, `Cmd` on macOS. `Cmd`/`Meta` — literal Command on macOS; on Windows/Linux Win/Super is usually unavailable to the application. For portable files use `Ctrl`; import `Cmd`/`Meta` on Windows/Linux with a warning and treat as primary, so that the file does not lose bindings.
+- The `+` key is written as `Plus`; `Ctrl+Plus` is a chord with the "plus" key. The notation `Ctrl++` is not recommended and may be rejected as ambiguous.
+- `Ctrl` in the file means **primary**: `Ctrl` on Windows/Linux, `Cmd` on macOS. `Cmd`/`Meta` — the literal Command on macOS; on Windows/Linux Win/Super is usually unavailable to the application. For portable files use `Ctrl`; import `Cmd`/`Meta` on Windows/Linux with a warning and treat them as primary so that the file does not lose bindings.
 - `Primary` — a synonym for `Ctrl`.
 - `Option` — a synonym for `Alt`; on export on macOS write `Alt` for portability, accept `Option`.
 
@@ -599,33 +598,126 @@ key         := letter | digit | named-key | punctuation
 Canonical names (synonyms from `egui::Key::from_name` are also accepted):
 
 - letters: `A`…`Z`;
-- digits: `0`…`9` (main row), `Num0`…`Num9` (Numpad);
+- digits: `0`…`9` (the main row), `Num0`…`Num9` (Numpad);
 - functions: `F1`…`F24`;
 - navigation: `Up`, `Down`, `Left`, `Right`, `ArrowUp`, `ArrowDown`, `ArrowLeft`, `ArrowRight`, `Home`, `End`, `PageUp`, `PageDown`, `Insert`, `Delete`, `Backspace`, `Enter`, `Return`, `Tab`, `Escape`, `Esc`, `Space`;
 - punctuation: `Comma`, `Period`, `Slash`, `Semicolon`, `Quote`, `Backquote`, `Minus`, `Equals`, `OpenBracket`, `CloseBracket`, `Backslash`, `Plus`, `Colon`, `Pipe`, `Questionmark`, `Exclamationmark`;
 - Numpad: `NumpadAdd`, `NumpadSubtract`, `NumpadMultiply`, `NumpadDivide`, `NumpadEnter`, `NumpadDecimal`;
 - other: `PrintScreen`, `Pause`, `Menu`, `BrowserBack` (if egui provides it).
 
-Symbolic abbreviations for punctuation (`Ctrl+,`, `Ctrl+.`, `Ctrl+/`, `Ctrl+;`, `Ctrl+'`, `Ctrl+\``, `Ctrl+-`, `Ctrl+=`, `Ctrl+[`, `Ctrl+]`, `Ctrl+\`) are accepted. On export, for readability, write the symbols themselves (`Ctrl+,`, `Ctrl+.`), not `Comma`/`Period`; the exception is the "plus" key: write `Ctrl+Plus`, because `Ctrl++` is ambiguous. This matters for the familiar `Ctrl+,` (Settings).
+Symbolic abbreviations for punctuation (`Ctrl+,`, `Ctrl+.`, `Ctrl+/`, `Ctrl+;`, `Ctrl+'`, `Ctrl+\``, `Ctrl+-`, `Ctrl+=`, `Ctrl+[`, `Ctrl+]`, `Ctrl+\`) are accepted. On export, for readability, write the symbols themselves (`Ctrl+,`, `Ctrl+.`) rather than `Comma`/`Period`; the exception is the "plus" key: write `Ctrl+Plus`, because `Ctrl++` is ambiguous. This matters for the familiar `Ctrl+,` (Settings).
 
-### 5.4. Localized letters and layout
+### 5.4. Localized letters and the layout
 
 - `Ctrl+В` (Cyrillic) is accepted as `Ctrl+D`; the table is in Appendix C.
 - `Ctrl+С` → `Ctrl+C`, `Ctrl+М` → `Ctrl+V`, `Ctrl+А` → `Ctrl+F`, `Ctrl+Ф` → `Ctrl+A`, etc. per the table.
-- If the symbol is in the table, it is converted to the physical key; if not — the line is considered an error with a line number.
-- Latin characters are always treated as the physical US keyboard position, not as "the letter on the current layout
+- If a character is in the table, it is converted to the physical key; if not, the line is treated as an error with a number.
+- Latin characters are always treated as the physical position on the US keyboard, not as "the letter on the current layout".
+- `Ctrl+Shift+В` → `Ctrl+Shift+D`.
+- `WA` and `WА` (the second `А` Cyrillic) are the same sequence; on export `WA`.
 
-# 6. Architecture and Technical Plan
+### 5.5. Example file
 
-### 6.1. New Types
+> **SPEC-009 (takes precedence):** the example below is outdated regarding Home and `Ctrl+D`: in BIMCraft Home is `Ctrl+U`, and `Ctrl+D` is not assigned in the default profile.
+
+```text
+# BIMCraft keyboard shortcuts
+# version: 2
+# Format: <action> = <binding>
+# One line — one binding; comments start with #.
+version = 2
+profile = bimcraft
+
+# --- Move ---
+cmd.move = Ctrl+D
+cmd.move = Ctrl+Shift+M
+cmd.move = MV
+
+# --- Wall ---
+cmd.wall = WA
+cmd.wall = Ctrl+Shift+E
+
+# --- Door ---
+cmd.door = DR
+cmd.door = Ctrl+В
+
+# --- Save ---
+cmd.save = Ctrl+S
+ui.file.save_as = Ctrl+Shift+S
+
+# --- Properties ---
+ui.palette.properties = Ctrl+1
+
+# --- Start page (moved off Ctrl+D) ---
+ui.view.home = Ctrl+Shift+H
+```
+
+A note on `cmd.door = Ctrl+В`: on the Russian layout this is the physical key `D`; on loading the record is canonicalized to `Ctrl+D`.
+
+### 5.6. Errors and warnings
+
+The parser returns:
 
 ```rust
-// crates/ui-egui/src/shortcuts.rs (or shortcuts/ module as it grows)
+struct ParsedProfile {
+    version: u32,
+    bindings: Vec<(ActionId, Binding)>,
+    warnings: Vec<Warning>,   // line, reason, action
+    errors: Vec<Error>,       // line, reason
+}
+```
+
+Examples of errors:
+
+- `unknown action: "Wallz"` (line 12);
+- `unknown key: "Ctrl+Ъ"` (line 15);
+- `a sequence must consist of two keys: "W"` (line 18);
+- `conflict: "Ctrl+D" is already assigned to "cmd.move"` (line 21);
+- `reserved key: "Esc"` (line 24);
+- `version 3 is not supported` (line 2).
+
+An error in one line does not prevent the other valid lines from being applied (except a version/structure error). In the import preview show the first 50 errors and "N more".
+
+### 5.7. JSON format
+
+```json
+{
+  "version": 2,
+  "profile": "custom",
+  "bindings": [
+    {"action": "cmd.move", "keys": ["Ctrl+D", "Ctrl+Shift+M", "MV"]},
+    {"action": "cmd.wall", "keys": ["WA", "Ctrl+Shift+E"]}
+  ]
+}
+```
+
+- `keys` — an array of strings in the same syntax as the text format.
+- The old JSON `{"WA": "Wall"}` is read as legacy.
+- JSON is exported with 2-space indentation, keys in a stable order (actions by ID).
+
+### 5.8. Revit XML compatibility
+
+Input lines of the form:
+
+```xml
+<Shortcut CommandName="Wall" CommandId="ID_OBJECTS_WALL" Shortcuts="WA#W1" />
+```
+
+are read as the sequences `WA` and `W1` for the action found by `CommandName`/`CommandId` (localized/English name). Chords cannot be represented in Revit XML. Export to Revit XML is optional; if it is done, sequences only, with a warning about skipped chords.
+
+---
+
+## 6. Architecture and technical plan
+
+### 6.1. New types
+
+```rust
+// crates/ui-egui/src/shortcuts.rs (or a shortcuts/ module as it grows)
 
 use std::sync::Arc;
 
-/// Action ID. UI strings are static; core command IDs (`cmd.<id>`) are collected
-/// once during registry construction and interned as `Arc<str>`.
+/// Action ID. UI strings are static; core command IDs (`cmd.<id>`) are built
+/// once when the registry is constructed and interned into `Arc<str>`.
 pub type ActionId = Arc<str>;
 
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
@@ -660,7 +752,7 @@ pub struct ActionDef {
     pub defaults: &'static [Binding], // or &'static [&'static str] parsed at startup
     pub synonyms: &'static [&'static str],
     pub enabled: fn(&BimApp) -> bool,
-    pub execute: fn(&mut BimApp, &Context), // Context needed for Open/dialogs/file actions
+    pub execute: fn(&mut BimApp, &Context), // Context is needed by Open/dialogs/file actions
 }
 
 pub struct Shortcuts {
@@ -672,33 +764,34 @@ pub struct Shortcuts {
 ```
 
 Notes:
-- `Binding` must be `Hash + Eq` for hash tables.
-- `defaults` can be stored as strings and parsed once at startup (easier to update), but the hot path should use the already parsed `Binding`.
-- `ActionDef` is better collected in a `static`/`OnceLock` registry to avoid allocations every frame.
-- `enabled` and `execute` are functions, not closures, so the registry can be `'static`.
 
-### 6.2. Action Registry
+- `Binding` must be `Hash + Eq` for the hash tables.
+- `defaults` can be stored as strings and parsed once at startup (easier to update), but use already parsed `Binding`s on the hot path.
+- `ActionDef` is best assembled into a `static`/`OnceLock` registry so that nothing is allocated every frame.
+- `enabled` and `execute` are functions, not closures, so that the registry can be `'static`.
 
-1. Base list: a static array `UI_ACTIONS` (all UI actions, including current `ACTIONS`).
+### 6.2. Action registry
+
+1. The base list is the static array `UI_ACTIONS` (all UI actions, including the current `ACTIONS`).
 2. Core commands are added from `engine::commands()`:
    - ID: `cmd.<command.id>`;
    - label: `command.label`;
    - category: by `command.menu` or an explicit table;
-   - kind: by an explicit `COMMAND_KINDS` table (Tool/Dialog/Immediate/Input/Internal);
-   - aliases: `command.aliases` (become default sequences);
+   - kind: by the explicit table `COMMAND_KINDS` (Tool/Dialog/Immediate/Input/Internal);
+   - aliases: `command.aliases` (they become default sequences);
    - menu: `command.menu`.
-3. Duplicate IDs are forbidden; `debug_assert!` and a test during construction.
+3. Duplicate IDs are forbidden; at build time — `debug_assert!` and a test.
 4. Keep `shortcuts::ACTIONS` as a compatible list of names (for old files and Find), but make `registry::actions()` the source of truth.
-5. Function `resolve_action(desc)`:
-   - first searches by ID;
+5. The `resolve_action(desc)` function:
+   - first looks up by ID;
    - then by English label;
-   - then by localized label (as it does now);
+   - then by localized label (as now);
    - then by legacy names;
-   - returns `ActionId`.
-6. Function `execute_action(app, ctx, id) -> bool` replaces `execute_shortcut_action`. Inside: `match` on ID or call `def.execute(app, ctx)`. For core commands with ready parameters: `app.run(command.id, params)`; for tools: `app.set_tool(...)`; for dialogs: open the corresponding field. For commands with mandatory parameters (`open`, `insert`, `point_cloud`, `schedule`, `render`, `save` with a path), the executor opens an existing dialog/file picker (`guard(Pending::Open, ctx)`, etc.) rather than calling `run(id, {})`; if no such UI exists, the action is marked `Input`/`Internal` and cannot be bound.
-7. Keep the old `execute_shortcut_action(action: &str)` as a thin wrapper during migration: `resolve_action(action).and_then(execute_action)`. After migrating all calls, remove it.
+   - returns an `ActionId`.
+6. The `execute_action(app, ctx, id) -> bool` function replaces `execute_shortcut_action`. Inside — a `match` on the ID or a call to `def.execute(app, ctx)`. For core commands with ready parameters — `app.run(command.id, params)`; for tools — `app.set_tool(...)`; for dialogs — opening the corresponding field. For commands with mandatory parameters (`open`, `insert`, `point_cloud`, `schedule`, `render`, `save` with a path) the executor opens the existing dialog/file picker (`guard(Pending::Open, ctx)` etc.) rather than calling `run(id, {})`; if there is no such UI, the action is marked `Input`/`Internal` and is not assignable.
+7. Keep the old `execute_shortcut_action(action: &str)` as a thin wrapper during migration: `resolve_action(action).and_then(execute_action)`. Remove it after all call sites are converted.
 
-### 6.3. Input Handling in `lib.rs`
+### 6.3. Input handling in `lib.rs`
 
 Replace the `keys()` block (around 1780–2050) with a pipeline:
 
@@ -731,49 +824,52 @@ for event in key_press_events(!repeat) {
 ```
 
 Implementation requirements:
-- Do not use `consume_key` for chords: it ignores extra `Shift`/`Alt` (`matches_logically`). Use `matches_exact` and consume/mark the specific event.
-- Account for `physical_key`; fallback to `key` (for web/some platforms).
+
+- Do not use `consume_key` for chords: it ignores extra `Shift`/`Alt` (`matches_logically`). Use `matches_exact` and remove/mark the specific event.
+- Take `physical_key` into account; fall back to `key` (for web/some platforms).
 - Ignore `repeat == true` for commands.
-- Process `typed_length` before sequences.
-- After a chord triggers, do not let the event reach `typed`.
-- Keep `Escape`/`Enter`/`Tab`/`Space`/`Backspace`/arrows in existing contextual handling if they are not bound (they are reserved).
-- Remove hardcoded `pressed(Modifiers::COMMAND, Key::D)` and others from list 2.2; their role is now handled by the registry and default profile.
-- `Ctrl+D` no longer calls `toggle_home()`; Home is `Ctrl+Shift+H` *(Note: overridden by TS-009, see below)*.
-- `Delete` can remain in both contextual handling and the registry; to avoid double deletion, use only the registry (or contextual handling must check that the binding didn't trigger). It is recommended to move `Delete` to the registry and remove the hardcoded check.
-- Move `F8`/`F11` to the registry (`ui.view.alignment_guides`), keep as defaults.
+- Handle `typed_length` before sequences.
+- After a chord fires, do not let the event reach `typed`.
+- Leave `Escape`/`Enter`/`Tab`/`Space`/`Backspace`/arrows in the existing contextual handling if they are not assigned (they are reserved).
+- Remove the hard-coded `pressed(Modifiers::COMMAND, Key::D)` and the rest from the list in 2.2; their role now belongs to the registry and the default profile.
+- `Ctrl+D` no longer calls `toggle_home()`; Home is `Ctrl+Shift+H`.
+- `Delete` may be left both in the contextual handling and in the registry; to avoid double deletion — the registry only (or the contextual handling must check that no binding fired). It is recommended to move `Delete` to the registry and remove the hard-coded check.
+- Move `F8`/`F11` to the registry (`ui.view.alignment_guides`), keep them as defaults.
 
 ### 6.4. Settings
 
 `crates/ui-egui/src/settings.rs`:
-- `Settings.shortcuts: ShortcutsConfig` (serializable struct).
+
+- `Settings.shortcuts: ShortcutsConfig` (a serializable structure).
 - `shortcuts_from(v, base)`:
   - if `v` is an object with `version: 2` and a `bindings` array — parse it;
-  - if `v` is an old `key → action` object — migrate it;
+  - if `v` is the old `key → action` object — migrate it;
   - if `v` is missing/not an object — keep `base`.
 - `MAX_SHORTCUTS` → 4096; add `MAX_ACTIONS = 512`.
 - `use_settings`: `self.shortcuts = Shortcuts::from_config(kept.shortcuts)`.
 - `settings_now`: `shortcuts: self.shortcuts.to_config()`.
-- `keep_settings` already compares `Settings` and writes atomically; it is sufficient for `ShortcutsConfig` to implement `PartialEq`.
-- During migration, maintain backward compatibility: old key `"WA"` → `Binding::Sequence([Key::W, Key::A])`; action `"Wall"` → `cmd.wall`.
-- If a key in the old file is not two letters (which shouldn't happen) — skip it.
+- `keep_settings` already compares `Settings` and writes atomically; it is enough for `ShortcutsConfig` to implement `PartialEq`.
+- On migration keep backward compatibility: the old key `"WA"` → `Binding::Sequence([Key::W, Key::A])`; the action `"Wall"` → `cmd.wall`.
+- If an old file has a key that is not two letters (which should not happen) — skip it.
 
-### 6.5. Parser and Serializer
+### 6.5. Parser and serializer
 
 - `parse_shortcuts(text: &str, registry: &Registry) -> ParsedProfile`.
 - `serialize_shortcuts(profile: &Shortcuts, registry: &Registry, mode: ExportMode) -> String`.
 - `parse_binding(s: &str) -> Result<Binding, BindingError>`.
-- `display_binding(b: &Binding) -> String` — canonical form.
+- `display_binding(b: &Binding) -> String` — the canonical form.
 - `display_binding_localized(b, lang) -> String` — with `(Ctrl+В)` for Russian.
 - `resolve_key(name: &str) -> Option<Key>`:
   - `Key::from_name` (egui);
-  - synonym table (`Esc`, `Return`, `Option`, `Cmd`, `Primary`, punctuation);
-  - Cyrillic table (Appendix C).
+  - a synonym table (`Esc`, `Return`, `Option`, `Cmd`, `Primary`, punctuation);
+  - a Cyrillic table (Appendix C).
 - `canonicalize(b: &Binding) -> Binding` — normalize modifiers and keys.
 - The parser must not panic on any input; all errors go to `errors`.
 
 ### 6.6. Dialog
 
 `crates/ui-egui/src/shortcuts.rs`:
+
 - `ShortcutsDialog`:
   ```rust
   pub struct ShortcutsDialog {
@@ -792,169 +888,170 @@ Implementation requirements:
   }
   ```
 - `Capture { action: ActionId, current: Option<Binding>, keys: Vec<Key>, ... }`.
-- The dialog works with `pending`, not directly with `BimApp::shortcuts`; "Apply" copies `pending` to the app and saves.
+- The dialog works with `pending`, not directly with `BimApp::shortcuts`; "Apply" copies `pending` into the application and saves.
 - "Cancel"/`Esc` restores `original`.
-- For capture, use the same `Event::Key`, `physical_key`, and `matches_exact`.
-- Capture must not trigger as a global binding: while `capture.is_some()`, app binding processing is disabled.
-- Show conflicts via `find_conflict` on `pending`.
-- Import/export via `rfd::AsyncFileDialog`, as currently done; filters `.txt`, `.bks`, `.json`, `.xml`.
+- For capture use the same `Event::Key`, `physical_key` and `matches_exact`.
+- Capture must not fire as a global binding: while `capture.is_some()`, the application's binding handling is disabled.
+- Show conflicts through `find_conflict` on `pending`.
+- Import/export — through `rfd::AsyncFileDialog`, as now; filters `.txt`, `.bks`, `.json`, `.xml`.
 
-### 6.7. Find, Ribbon, Menu
+### 6.7. Find, ribbon, menus
 
 - `find.rs`:
-  - `find_matches` gets actions from the registry;
-  - for each action: `shortcuts::display_for(action.id)`, up to two bindings + `+N`;
-  - search by binding string.
+  - `find_matches` takes actions from the registry;
+  - for each action — `shortcuts::display_for(action.id)`, up to two bindings + `+N`;
+  - search by the binding string.
 - `lib.rs`:
-  - helper `fn shortcut_tip(action: ActionId, text: &str) -> String` adds ` (…)`;
-  - helper `fn shortcut_text(action: ActionId) -> Option<String>`;
-  - replace hardcoded labels in `big_button`/`small_button` and menus.
-- `ribbon.rs` does not store commands; change only if a helper for strings is needed.
+  - the helper `fn shortcut_tip(action: ActionId, text: &str) -> String` appends ` (…)`;
+  - the helper `fn shortcut_text(action: ActionId) -> Option<String>`;
+  - replace hard-coded labels in `big_button`/`small_button` and the menus.
+- `ribbon.rs` does not store commands; change it only if a helper for strings is needed.
 - `find.rs` and `shortcuts.rs` must not duplicate the action list.
 
-### 6.8. Files to Change
+### 6.8. Files that change
 
 | File | What to do |
-| --- | --- |
-| `crates/ui-egui/src/shortcuts.rs` | New types `Binding`, `KeyChord`, `ActionDef`, `Shortcuts`; registry; parser/serializer; Markdown help generator; dialog; capture; conflicts. If it grows, split into `shortcuts/{mod,chord,registry,file,markdown,dialog}.rs`. |
-| `crates/ui-egui/src/lib.rs` | Replace `custom_shortcuts`/`typed` fields with `shortcuts: Shortcuts`; rewrite `keys`, `shortcut()`, `shortcuts()`; remove hardcoded `pressed`; `Ctrl+D` → Move; Home → `Ctrl+Shift+H` *(Note: overridden by TS-009)*; tooltip helpers. |
+|---|---|
+| `crates/ui-egui/src/shortcuts.rs` | New types `Binding`, `KeyChord`, `ActionDef`, `Shortcuts`; registry; parser/serializer; Markdown reference generator; dialog; capture; conflicts. As it grows — split into `shortcuts/{mod,chord,registry,file,markdown,dialog}.rs`. |
+| `crates/ui-egui/src/lib.rs` | Replace the `custom_shortcuts`/`typed` fields with `shortcuts: Shortcuts`; rewrite `keys`, `shortcut()`, `shortcuts()`; remove the hard-coded `pressed`; `Ctrl+D` → Move; Home → `Ctrl+Shift+H`; tooltip helpers. |
 | `crates/ui-egui/src/settings.rs` | New `shortcuts` schema, migration, limits, `use_settings`, `settings_now`. |
-| `crates/ui-egui/src/find.rs` | Show multiple bindings, search by binding. |
-| `crates/core/src/engine.rs` | No changes, if `Command` is sufficient; if necessary, add `shortcut_kind`/`category` or keep the table in UI. |
-| `crates/core/src/commands.rs` | No changes; verify that all 170 commands are classified in the UI registry. |
+| `crates/ui-egui/src/find.rs` | Show several bindings, search by binding. |
+| `crates/core/src/engine.rs` | Unchanged if `Command` is enough; if necessary add `shortcut_kind`/`category` or keep the table in the UI. |
+| `crates/core/src/commands.rs` | Unchanged; check that all 170 commands are classified in the UI registry. |
 | `crates/ui-egui/src/lang.rs`, `translations/ui/*` | New strings, translations. |
 | `assets/shortcuts/*.bks` (new resource) | Default profiles BIMCraft/Revit/Archicad/Empty; `include_str!`. |
 | `docs/areas/desktop.md` | Rewrite the Keyboard Shortcuts section. |
-| `docs/areas/shortcuts.md` (new) | User documentation and file format. |
+| `docs/areas/shortcuts.md` (new) | User documentation and the file format. |
 | `README.md` | Update line 407 and the command/shortcut table. |
 | `crates/ui-egui/tests/*` | New tests: `shortcuts_kept.rs`, `shortcuts_input.rs`, `shortcuts_file.rs`, `shortcuts_dialog.rs`, `shortcuts_md.rs`. |
 
-### 6.9. What Does Not Change
+### 6.9. What does not change
 
-- Core commands, their `id`, `run`, `params`, and project format.
-- `settings.json` continues to store other settings; only the `shortcuts` field changes.
-- Autosave, undo/redo, project saving.
-- Tool behavior, except for the source of keystrokes.
+- Core commands, their `id`, `run`, `params` and the project format.
+- `settings.json` keeps storing the other settings; only the `shortcuts` field changes.
+- Autosave, undo/redo, saving the project.
+- Tool behavior, except for the source of key presses.
 - Localization of action names.
 
 ---
 
-## 7. Pitfalls (Must be considered)
+## 7. Pitfalls (must be taken into account)
 
-1. **`consume_key` ignores extra Shift/Alt.** In egui 0.36, `InputState::consume_key` uses `Modifiers::matches_logically`: `Ctrl+D` will trigger on `Ctrl+Shift+D` if `Ctrl+Shift+D` isn't checked first. For exact bindings, use `matches_exact` and consume the event manually. Otherwise, `Ctrl+D` and `Ctrl+Shift+D` cannot coexist.
-2. **`Event::Text` is layout, not a key.** Never build chords/sequences from text. Only `Event::Key`.
-3. **`physical_key` can be `None`.** On web and some platforms, fallback to `key`. For non-Latin layouts, egui itself substitutes the physical key into `key`, but relying solely on this is not advisable.
-4. **Russian layout and `Ctrl+В`.** Verify that `Event::Key { key: Key::D (fallback), physical_key: Some(Key::D), modifiers: Ctrl }` and `text: "в"` trigger Move. A test is mandatory.
-5. **AltGr.** On Windows, this is `Ctrl+Alt`; a user might bind `Ctrl+Alt+E`, and the system will generate the `€` symbol. If focus is in a text field, text has priority. On the canvas, warn the user.
-6. **macOS `Cmd` vs `Ctrl`.** `Modifiers::COMMAND` on macOS is Cmd, on Windows/Linux it is Ctrl. The file `Ctrl` should mean primary, not literal Control. For literal Control on macOS, use `Control`? This is ambiguous. Decision: `Ctrl`/`Primary` = primary; `Control` is a synonym for primary for simplicity; literal Control on macOS is not supported in v1 (document this). `Cmd`/`Meta` = literal Command.
-7. **Text fields.** `Ctrl+C`/`Ctrl+V`/`Ctrl+X`/`Ctrl+A`/`Ctrl+Z` must remain with the field. Do not intercept them even if the user bound them to an action. Exception: Save/Open/New/Find/Settings, which do not steal text.
-8. **IME and dead keys.** While IME composition is active, do not process bindings; `ctx.egui_wants_keyboard_input()` and `Event::Ime` are indicators. Dead keys (accents) must not create a binding; use only `Event::Key`.
-9. **Shift and letters.** `Shift+D` is `D` with `shift=true`; do not confuse it with `Ctrl+D`. For sequences, Shift should not change the key, nor should it turn a sequence into a chord.
+1. **`consume_key` ignores extra Shift/Alt.** In egui 0.36 `InputState::consume_key` uses `Modifiers::matches_logically`: `Ctrl+D` fires with `Ctrl+Shift+D` if `Ctrl+Shift+D` was not checked earlier. For exact bindings use `matches_exact` and your own event consumption. Otherwise `Ctrl+D` and `Ctrl+Shift+D` cannot coexist.
+2. **`Event::Text` is the layout, not the key.** Never build chords/sequences from text. `Event::Key` only.
+3. **`physical_key` may be `None`.** On web and some platforms use the `key` fallback. For non-Latin layouts egui itself substitutes the physical key into `key`, but it is not worth relying on that alone.
+4. **The Russian layout and `Ctrl+В`.** Verify that `Event::Key { key: Key::D (fallback), physical_key: Some(Key::D), modifiers: Ctrl }` with `text: "в"` gives Move. A test is mandatory.
+5. **AltGr.** On Windows this is `Ctrl+Alt`; the user may assign `Ctrl+Alt+E`, and the system will generate the character `€`. If the focus is in a text field — text wins. On the canvas — warn.
+6. **macOS `Cmd` vs `Ctrl`.** `Modifiers::COMMAND` on macOS is Cmd, on Windows/Linux it is Ctrl. The file's `Ctrl` must mean primary, not literal Control. Should literal Control on macOS use `Control`? That is ambiguous. Decision: `Ctrl`/`Primary` = primary; `Control` is a synonym for primary for simplicity; literal Control on macOS is not supported in v1 (document it). `Cmd`/`Meta` — literal Command.
+7. **Text fields.** `Ctrl+C`/`Ctrl+V`/`Ctrl+X`/`Ctrl+A`/`Ctrl+Z` must stay with the field. Do not intercept them even if the user assigned them to an action. The exception is Save/Open/New/Find/Settings, which do not steal text.
+8. **IME and dead keys.** While an IME composition is in progress, do not handle bindings; `ctx.egui_wants_keyboard_input()` and `Event::Ime` are the indicators. Dead keys (accents) must not create a binding; use `Event::Key` only.
+9. **Shift and letters.** `Shift+D` is `D` with `shift=true`; do not confuse it with `Ctrl+D`. For sequences Shift must not change the key, but must not turn the sequence into a chord either.
 10. **CapsLock.** Does not affect `Key`; do not use text to determine it.
-11. **Key repeat.** Holding `Ctrl+D` must not trigger Move multiple times. Ignore `repeat`.
-12. **Open menus and popups.** Keep the current early `return` when `Popup::is_any_open`; otherwise, menus will start executing commands.
-13. **Double execution.** `Delete` is currently handled in contextual keys and might be bound. After moving to the registry, remove the hardcoded check or add an "already executed" flag.
-14. **`Ctrl+D` conflict with Home.** Must reassign Home; otherwise, the user scenario fails. Old settings do not contain `Ctrl+D`, so migration is safe. *(Note: TS-009 overrides this: Home is `Ctrl+U`, `Ctrl+D` is free).*
-15. **Duplicate aliases (`CL`).** `column` and `structural_column` share `CL`; we cannot pretend they are one command. In the registry, they are two IDs. In the hash table, `CL` belongs to `cmd.column`; the executor of `cmd.column` upon pressing `CL` looks at the active tab and, if `Tab::Structure`/`Context(Structure)`, chooses `cmd.structural_column`, as it does now. A user binding `CL` to another action disables this contextual rule for `CL` (the user explicitly overridden it). There must not be two owners of the same `CL` in the table.
-16. **Commands with mandatory parameters.** `wall {points}`, `door {at}`, `schedule`, `render`, `open {path}`, etc. Cannot just call `run(id, {})` — it will error. For interactive tools, use `Tool`; for others, use the existing dialog or mark as "requires parameters".
-17. **Localization and ID.** Do not store localized names as keys in settings; only IDs. Names are for import/search.
-18. **Deterministic export.** Do not write `HashMap` to a file; use `BTreeMap`/sorting. Otherwise, diffs and round-trips will be unstable.
-19. **Size and corrupted files.** Limits and atomic writes; do not block the UI on large files.
-20. **Backward compatibility with old settings.** The old `settings.json` must not lose bindings; the new file must read without panicking.
-21. **Cross-OS tests.** Reference strings with `Ctrl` on macOS might display as `Cmd`; in tests, compare the canonical model, not the platform-specific label.
-22. **Performance.** Do not iterate over 4096 bindings on every keystroke; use hash tables.
-23. **Security.** The file is data only; no `eval`, plugins, paths, or OS commands.
-24. **User profiles.** Do not overwrite a user profile when selecting a default profile without confirmation.
-25. **Reset.** "Restore Defaults" must not delete user bindings of other profiles if they are stored; in v1, only one active set is stored — clarify in the UI.
-26. **Sketch.** Do not lose the contextual behavior of `Ctrl+Z` (undo sketch line) when moving Undo to the registry; check `self.sketch.is_some()` before the general binding.
-27. **Note editing.** While `note_edit` is active and focus is not in a field, `note_keys` processes the keys; do not intercept them with global bindings.
-28. **`typed_length`.** Digits, `.`, and `,` during length input must go to length, not to sequences; do not break existing logic.
-29. **`Tab`.** The current code separately strips `Tab` from events for cyclic selection; preserve this behavior and do not treat `Tab` as a binding.
+11. **Key repeat.** Holding `Ctrl+D` must not launch Move many times. Ignore `repeat`.
+12. **Open menus and popups.** Keep the current early `return` on `Popup::is_any_open`; otherwise menus will start running commands.
+13. **Double execution.** `Delete` is currently handled both in the contextual keys and can be assigned. After moving it to the registry, remove the hard-coded check or add an "already done" flag.
+14. **The `Ctrl+D` conflict with Home.** Home must be reassigned; otherwise the user scenario does not work. Old settings do not contain `Ctrl+D`, so migration is safe.
+15. **Duplicate aliases (`CL`).** `column` and `structural_column` share one `CL`; do not pretend they are one command. In the registry they are two IDs. In the hash table `CL` belongs to `cmd.column`; the `cmd.column` executor, when `CL` is pressed, looks at the active tab and, with `Tab::Structure`/`Context(Structure)`, chooses `cmd.structural_column`, as now. A user binding of `CL` to another action disables this contextual rule for `CL` (the user has explicitly overridden it). There must not be two owners of one `CL` in the table.
+16. **Commands with mandatory parameters.** `wall {points}`, `door {at}`, `schedule`, `render`, `open {path}` and the like. You cannot simply call `run(id, {})` — it will fail. For interactive tools use `Tool`; for the rest — an existing dialog or the "requires parameters" mark.
+17. **Localization and IDs.** Do not store localized names as keys in settings; IDs only. Names are for import/search.
+18. **Deterministic export.** Do not write a `HashMap` to a file; use `BTreeMap`/sorting. Otherwise diffs and round-trips will be unstable.
+19. **Size and corrupt files.** Limits and atomic writing; do not block the UI on a large file.
+20. **Compatibility with old settings.** An old `settings.json` must not lose bindings; a new file must be read without panicking.
+21. **Tests on different OSes.** Reference strings with `Ctrl` on macOS may be displayed as `Cmd`; in tests compare the canonical model, not the platform label.
+22. **Performance.** Do not iterate 4096 bindings on every key press; use hash tables.
+23. **Security.** The file is data only; no `eval`, plugins, paths, OS commands.
+24. **User profiles.** Do not overwrite the user profile when choosing a default one without confirmation.
+25. **Reset.** "Restore Defaults" must not delete user bindings of other profiles if they are stored; in v1 a single active set is stored — clarify this in the UI.
+26. **Sketch.** Do not lose the contextual behavior of `Ctrl+Z` (undoing a sketch line) when moving Undo to the registry; check `self.sketch.is_some()` before the global binding.
+27. **Note editing.** While `note_edit` is active and the focus is not in a field, `note_keys` handles the keys; do not intercept them with global bindings.
+28. **`typed_length`.** Digits, `.` and `,` while entering a length must go to the length, not to sequences; do not break the existing logic.
+29. **`Tab`.** The current code separately cuts `Tab` out of the events for cyclic selection; preserve this behavior and do not treat `Tab` as a binding.
 
 ---
 
 ## 8. Tests
 
-### 8.1. Unit Tests (`crates/ui-egui`)
+### 8.1. Unit tests (`crates/ui-egui`)
 
 1. `parse_binding("Ctrl+D")` → `Chord { key: D, ctrl: true }`.
-2. `parse_binding("Ctrl+В")` → same as `Ctrl+D`.
+2. `parse_binding("Ctrl+В")` → the same as `Ctrl+D`.
 3. `parse_binding("WA")` → `Sequence([W, A])`.
 4. `parse_binding("WА")` (Cyrillic А) → `Sequence([W, A])`.
 5. `parse_binding("Ctrl+Shift+D")` ≠ `Ctrl+D`; both exist.
-6. `parse_binding("Ctrl++")` → error/`Plus` per rule.
-7. `parse_binding("Esc")` → error "reserved" (or valid key, but forbidden at assignment level — clarify; test must capture the decision).
+6. `parse_binding("Ctrl++")` → an error/`Plus` per the rule.
+7. `parse_binding("Esc")` → the error "reserved" (or a valid key but forbidden at the assignment level — clarify; the test must record the decision).
 8. `display_binding` for all `Key::ALL` keys does not panic.
 9. `resolve_action` by ID, English label, localized label, legacy name.
-10. Registry: all IDs are unique; all `engine::commands()` are covered or in exceptions; all `ActionDef` with `kind != Internal` have `execute`.
-11. Default profiles: no conflicts; `Ctrl+D` → `cmd.move`; Home → `Ctrl+Shift+H` *(Note: overridden by TS-009)*.
-12. `find_conflict` for chords, sequences, default, and user bindings.
-13. `add_binding`: multiple bindings per action; conflict; replacement; deletion.
-14. `parse_shortcuts` v2: comments, CRLF, BOM, duplicate actions, multiple bindings.
+10. Registry: all IDs are unique; all `engine::commands()` are covered or in the exceptions; all `ActionDef`s with `kind != Internal` have `execute`.
+11. Default profiles: no conflicts; `Ctrl+D` → `cmd.move`; Home → `Ctrl+Shift+H`.
+12. `find_conflict` for chords, sequences, defaults and user bindings.
+13. `add_binding`: several bindings per action; conflict; replacement; deletion.
+14. `parse_shortcuts` v2: comments, CRLF, BOM, repeated actions, several bindings.
 15. `parse_shortcuts` legacy JSON/XML/`KEY - Name`.
-16. `parse_shortcuts` errors: unknown action, unknown key, conflict, version 3, file too large.
+16. `parse_shortcuts` errors: unknown action, unknown key, conflict, version 3, oversized file.
 17. `serialize` → `parse` → semantic equality; re-export is identical.
-18. `Settings::from_json` old `{"WA":"Wall"}` → new `Shortcuts`; new JSON → new; corrupted → `base`.
+18. `Settings::from_json` old `{"WA":"Wall"}` → new `Shortcuts`; new JSON → new; corrupt → `base`.
 19. `MAX_SHORTCUTS`/`MAX_ACTIONS` are respected.
-20. `enabled` for actions without selection/in inappropriate views.
-21. Markdown help contains **every** registry action, including commands without keys; table row count matches action count.
-22. Markdown help distinguishes active and default bindings; modified/deleted bindings are visible as such.
-23. Markdown help is valid: tables with escaped `|`, no raw HTML, headers and sections in place.
-24. Markdown help is deterministic (with "no date" option); repeated generation yields the same text.
-25. Importing `.md` is rejected with a clear message, settings remain unchanged.
+20. `enabled` for actions without a selection/in an unsuitable view.
+21. The Markdown reference contains **every** registry action, including commands without keys; the number of table rows matches the number of actions.
+22. The Markdown reference distinguishes active and default bindings; a changed/deleted binding is visible as such.
+23. The Markdown reference is valid: tables with escaped `|`, no raw HTML, headings and sections in place.
+24. The Markdown reference is deterministic (with the "without date" option); regenerating produces the same text.
+25. Importing `.md` is rejected with a clear message, settings do not change.
 
-### 8.2. Integration Tests (`egui_kittest`)
+### 8.2. Integration tests (`egui_kittest`)
 
-1. `Ctrl+D` (physical `Key::D`, modifiers Ctrl) → active tool `Tool::Move`.
+1. `Ctrl+D` (physical `Key::D`, modifiers Ctrl) → the active tool is `Tool::Move`.
 2. `Ctrl+В` (physical `Key::D`, `Event::Text("в")`) → `Tool::Move`.
-3. `Ctrl+D` on Russian layout without text event → `Tool::Move`.
+3. `Ctrl+D` on the Russian layout without a text event → `Tool::Move`.
 4. `Ctrl+Shift+D` → Copy, not Move; `Ctrl+D` → Move.
-5. `Ctrl+D` with focus in a text field → not Move; text `d`/`в` is typed.
-6. `Ctrl+C` with focus in a field → copy text, not a command.
-7. `Ctrl+S` with focus in a field → Save (allowlist).
-8. Modal dialog open → `Ctrl+D` not Move; `Esc` closes dialog.
-9. Menu open → `Ctrl+D` not Move; `Esc` closes menu.
-10. `WA` on Russian layout (physical W, A) → Wall.
-11. `WA` with timeout: after a pause, the buffer is cleared (if timeout is implemented).
+5. `Ctrl+D` with the focus in a text field → not Move; the text `d`/`в` is entered.
+6. `Ctrl+C` with the focus in a field → text copy, not a command.
+7. `Ctrl+S` with the focus in a field → Save (allowlist).
+8. A modal dialog is open → `Ctrl+D` is not Move; `Esc` closes the dialog.
+9. A menu is open → `Ctrl+D` is not Move; `Esc` closes the menu.
+10. `WA` on the Russian layout (physical W, A) → Wall.
+11. `WA` with a timeout: after a pause the buffer is cleared (if the timeout is implemented).
 12. Holding `Ctrl+D` (repeat) → Move once.
-13. Assigning two bindings via dialog → both work.
-14. Conflict in dialog → "Replace" removes it from the previous action.
+13. Assigning two bindings through the dialog → both work.
+14. A conflict in the dialog → "Replace" removes it from the previous action.
 15. "Apply" saves to `settings.json`; "Cancel" does not save.
-16. Import "Replace all" → old bindings disappear, new ones work.
-17. Import "Add" → conflicts skipped, report shown.
-18. Export → file exists, UTF-8, contains `version = 2` and all bindings.
+16. Import "Replace all" → the old bindings are gone, the new ones work.
+17. Import "Add" → conflicts are skipped, the report is shown.
+18. Export → the file exists, is UTF-8, contains `version = 2` and all bindings.
 19. Export → import → export → identical text.
-20. Find shows multiple bindings; searching for `Ctrl+D` finds Move.
-21. Ribbon tooltip contains `Ctrl+D` after assignment.
-22. New app launch with saved `settings.json` → bindings are in place.
-23. Old `settings.json` → migration, old `WA` works.
-24. Action unavailable → status, no fallback.
-25. Import file with `Ctrl+В` → `Ctrl+D` works.
-26. "Help (Markdown)…" button saves `.md`; file opens in a Markdown viewer and contains all sections.
-27. Help includes commands without keys and default bindings, even if the user changed them.
-28. In Russian UI help, there are hints like `Ctrl+D (Ctrl+В)`.
-29. Importing `.md` shows a message "this is help documentation" and does not touch settings.
+20. Find shows several bindings; searching for `Ctrl+D` finds Move.
+21. The ribbon tooltip contains `Ctrl+D` after assignment.
+22. A new application launch with a saved `settings.json` → the bindings are in place.
+23. An old `settings.json` → migration, the old `WA` works.
+24. An action is unavailable → status, no fallback.
+25. Importing a file with `Ctrl+В` → `Ctrl+D` works.
+26. The "Reference (Markdown)…" button saves the `.md`; the file opens in a Markdown viewer and contains all sections.
+27. The reference contains commands without keys and default bindings, even if the user changed them.
+28. In the reference with the Russian UI there are `Ctrl+D (Ctrl+В)` hints.
+29. Importing `.md` shows the message "this is a reference" and does not touch the settings.
 
-### 8.3. Manual Verification (Matrix)
+### 8.3. Manual check (matrix)
 
 | OS | Layouts | What to check |
-| --- | --- | --- |
+|---|---|---|
 | Linux | US, RU | `Ctrl+D`/`Ctrl+В`, `WA`, text in fields, AltGr |
 | Windows | US, RU | `Ctrl+D`/`Ctrl+В`, AltGr, `Ctrl+Shift+Esc` |
 | macOS | US, RU | `Cmd+D` (primary), literal `Ctrl`, `Cmd+Tab` |
-| Any | live layout switching | bindings do not change |
+| Any | switching the layout on the fly | bindings do not change |
 | Any | external keyboard | Numpad, F-keys |
 
-Manual checks:
-- all ribbon buttons with a binding show it in the tooltip;
-- File/Edit/Manage/View menus show bindings;
-- Find (Ctrl+K) shows bindings and searches by them;
-- import/export via system dialog;
-- reset action/category/all;
-- no double execution of `Delete`;
-- no false triggers when typing name, size, text.
+Check manually:
 
-### 8.4. Quality Control Commands
+- every ribbon button that has a binding shows it in the tooltip;
+- the File/Edit/Manage/View menus show bindings;
+- Find (Ctrl+K) shows bindings and searches by them;
+- import/export through the system dialog;
+- reset of an action/category/everything;
+- no double execution of `Delete`;
+- no false triggers while entering a name, a size, or text.
+
+### 8.4. Quality control commands
 
 ```bash
 cargo fmt --all -- --check
@@ -964,121 +1061,127 @@ cargo test -p bimcraft-core
 cargo test --workspace
 ```
 
-For UI tests — `egui_kittest` following the existing pattern (`crates/ui-egui/tests/`).
+For UI tests — `egui_kittest` following the existing example (`crates/ui-egui/tests/`).
 
 ---
 
-## 9. Documentation and Translations
+## 9. Documentation and translations
 
-1. `README.md`, line 407: rewrite the Shortcuts section — chords, multiple bindings, import/export, `Ctrl+D` = Move, layout independence.
-2. `docs/areas/desktop.md`, lines 479–488: update description of `shortcuts_window`, data models, `settings.json`.
-3. New `docs/areas/shortcuts.md`:
-   - user instructions;
-   - file format with examples;
-   - Russian layout table;
-   - list of reserved keys;
+1. `README.md`, line 407: rewrite the Shortcuts section — chords, several bindings, import/export, `Ctrl+D` = Move, layout independence.
+2. `docs/areas/desktop.md`, lines 479–488: update the description of `shortcuts_window`, the data model, `settings.json`.
+3. A new `docs/areas/shortcuts.md`:
+   - a user guide;
+   - the file format with examples;
+   - the Russian layout table;
+   - the list of reserved keys;
    - migration from the old format;
-   - section "How to view all combinations": Manage > Shortcuts > "Help (Markdown)…"; what goes into the file and how to read it.
-4. In README and app help — a short instruction: where to find the full list, how `.md` differs from `.bks` (help vs backup).
-5. `translations/ui/bimcraft-ui.pot` and language files: all new strings.
-6. `docs/video/` — optional short video/gif, if accepted in the project.
-7. CHANGELOG/ROADMAP — note the change of `Ctrl+D` (Home → Move) as noticeable to the user.
+   - a "How to see all combinations" section: Manage > Shortcuts > "Reference (Markdown)…"; what goes into the file and how to read it.
+4. In the README and in the application reference — a short instruction: where to find the full list, how `.md` differs from `.bks` (reference vs backup).
+5. `translations/ui/bimcraft-ui.pot` and the language files: all new strings.
+6. `docs/video/` — optionally a short video/GIF, if that is accepted in the project.
+7. CHANGELOG/ROADMAP — note the `Ctrl+D` change (Home → Move) as user-visible.
 
 ---
 
-## 10. Acceptance Criteria
+## 10. Acceptance criteria
 
-> **TS-009 (Priority):** the criteria below regarding `Ctrl+D` = Move and Home = `Ctrl+Shift+H` are replaced: in the BIMCraft profile, `Ctrl+D` is free, Home is `Ctrl+U`.
+> **SPEC-009 (takes precedence):** the criteria below about `Ctrl+D` = Move and Home = `Ctrl+Shift+H` are superseded: in the BIMCraft profile `Ctrl+D` is free, Home is `Ctrl+U`.
 
-1. In the hotkeys dialog, **any user-available command** can be assigned; all 170 core commands are present in the registry (assignable or with an explicit reason).
-2. **Multiple** combinations can be assigned to one command; all of them work.
-3. `Ctrl+D` executes "Move"; Home is moved to `Ctrl+Shift+H` *(Note: overridden by TS-009)*.
-4. `Ctrl+D` on English and `Ctrl+В` on Russian layouts perform the same action.
-5. Two-letter sequences `WA`, `DR`, `MV`, etc., work on the Russian layout (by physical keys).
+1. In the keyboard shortcuts dialog **any command available to the user** can be assigned; all 170 core commands are present in the registry (assignable or with an explicit reason).
+2. **Several** combinations can be assigned to one command; all of them work.
+3. `Ctrl+D` performs "Move"; Home is moved to `Ctrl+Shift+H`.
+4. `Ctrl+D` on the English layout and `Ctrl+В` on the Russian layout perform the same action.
+5. The two-letter `WA`, `DR`, `MV` and others work on the Russian layout (by physical keys).
 6. `Ctrl+D` and `Ctrl+Shift+D` are different bindings; the more specific one is not masked.
-7. A conflict of one chord on two actions is detected; the owner can be replaced.
-8. The dialog allows adding, changing, deleting a single binding, deleting all, resetting an action/category/all.
+7. A conflict of one chord for two actions is detected; the owner can be replaced.
+8. The dialog allows adding, changing and deleting one binding, deleting all, and resetting an action/category/everything.
 9. Export to `.txt`/`.bks` (and `.json`) contains all bindings and the version; the file is human-readable.
 10. Importing a file in "Replace" and "Add" modes works; errors are shown with line numbers; valid lines are applied.
-11. Export → import → export yields a semantically identical set.
-12. Bindings are saved in `settings.json` and survive a restart; the old format migrates without losing `WA`, etc.
+11. Export → import → export gives a semantically identical set.
+12. Bindings are saved in `settings.json` and survive a restart; the old format migrates without losing `WA` and others.
 13. Text fields are not intercepted; `Ctrl+C`/`Ctrl+V`/`Ctrl+Z` work in them as usual.
-14. Modal dialogs and menus do not execute global bindings.
-15. Ribbon, menu, and Find tooltips show assigned combinations (up to two + `+N`).
-16. No command is executed twice; holding a key does not repeat the action.
+14. Modal dialogs and menus do not run global bindings.
+15. Ribbon tooltips, menus and Find show the assigned combinations (up to two + `+N`).
+16. No command runs twice; holding a key does not repeat the action.
 17. All new strings are localized; the Russian UI shows `Ctrl+D (Ctrl+В)`.
-18. Tests from section 8 pass; `cargo fmt`, `clippy`, `test --workspace` are green.
-19. Documentation is updated; `docs/areas/shortcuts.md` describes the format and limitations.
-20. No regressions: autosave, undo/redo, project saving, existing tools work as before.
-21. There is a simple way to familiarize with all combinations: the "Help (Markdown)…" button (and optionally, a preview) generates a `.md` with all actions — active, default, and without keys, grouped by categories.
+18. The tests from section 8 pass; `cargo fmt`, `clippy`, `test --workspace` are green.
+19. The documentation is updated; `docs/areas/shortcuts.md` describes the format and limits.
+20. No regressions: autosave, undo/redo, saving the project and the existing tools work as before.
+21. There is a simple way to get acquainted with all combinations: the "Reference (Markdown)…" button (and, optionally, a preview) produces a `.md` with all actions — active, default and without keys — grouped by category.
 22. The Markdown file is valid, readable in GitHub/VS Code/Obsidian, contains conflicts and reserved keys; importing `.md` is explicitly rejected with a hint to use `.bks`/`.txt`/`.json`.
 
 ---
 
-## 11. Phased Plan
+## 11. Phased plan
 
-### Stage 0. Registry without behavior change
-- Extract `ACTIONS`/`SHORTCUTS`/aliases into `ActionDef`.
+### Stage 0. Registry without changing behavior
+
+- Move `ACTIONS`/`SHORTCUTS`/aliases into `ActionDef`.
 - Classify the 170 commands.
 - `execute_action` as a wrapper over the current `execute_shortcut_action`.
 - Coverage and ID uniqueness tests.
-- Behavior does not change; old tests are green.
+- Behavior does not change; the old tests are green.
 
 ### Stage 1. Binding model and input
+
 - `Binding`, `KeyChord`, `Shortcuts`.
-- Exact match, `physical_key`, sequences.
-- Remove hardcoded `pressed`; `Ctrl+D` → Move, Home → `Ctrl+Shift+H` *(Note: overridden by TS-009)*.
+- Exact matching, `physical_key`, sequences.
+- Remove the hard-coded `pressed`; `Ctrl+D` → Move, Home → `Ctrl+Shift+H`.
 - Settings migration.
 - Input tests, including `Ctrl+В`.
 
 ### Stage 2. Dialog
-- New `ShortcutsDialog` with multiple bindings, search, filters, conflicts, capture.
+
+- A new `ShortcutsDialog` with several bindings, search, filters, conflicts, capture.
 - "Apply/Cancel".
 - Dialog tests.
 
-### Stage 3. Import/Export
+### Stage 3. Import/export
+
 - Parser/serializer v2, legacy, JSON, XML.
 - Import preview, modes, errors.
-- Atomic writes, backup.
-- Markdown help generator: all actions, active + default bindings, commands without keys, grouping, conflicts.
-- "Export → import → export" tests and Markdown help tests.
+- Atomic writing, backup.
+- Markdown reference generator: all actions, active + default bindings, commands without keys, grouping, conflicts.
+- "Export → import → export" tests and Markdown reference tests.
 
 ### Stage 4. Profiles, tooltips, documentation
+
 - Built-in profiles BIMCraft/Revit/Archicad/Empty.
 - Ribbon/menu/Find tooltips.
-- "Help (Markdown)…" button and, optionally, preview.
+- The "Reference (Markdown)…" button and, optionally, a preview.
 - README, docs, translations.
-- Manual matrix.
+- The manual matrix.
 
-### Stage 5. Polish and Quality Control
-- Performance, limits, corrupted files.
+### Stage 5. Polish and quality control
+
+- Performance, limits, corrupt files.
 - Verification on Windows/Linux/macOS.
 - Final acceptance criteria.
 
 ---
 
-## 12. Out of Scope
+## 12. Out of scope
 
 - Macros (sequences longer than two keys, action recording, scripts).
-- Contextual bindings for specific views/tools (one global table per app).
-- Project-level bindings (only app settings).
-- Cloud profile synchronization.
-- OS-level key remapping.
+- Contextual bindings for individual views/tools (one global table per application).
+- Project-level bindings (application settings only).
+- Cloud synchronization of profiles.
+- Reassigning keys at the OS level.
 - Mouse gestures and game controllers.
-- Mobile/web versions (desktop only; `physical_key` may be missing on web).
-- Export to Archicad/Revit format as a mandatory requirement (Revit XML is optional, sequences only).
-- Markdown import: `.md` is for reading help only; use `.bks`/`.txt`/`.json` for import.
-- Automatic detection of the active OS layout for key labels (we use the JCUKEN table and UI language setting).
+- Mobile/web versions (desktop only; `physical_key` may be absent on web).
+- Export to the Archicad/Revit format as a mandatory requirement (Revit XML is optional, sequences only).
+- Markdown import: `.md` is a read-only reference; use `.bks`/`.txt`/`.json` for import.
+- Automatic detection of the active OS layout for key labels (the ЙЦУКЕН table and the UI language setting are used).
 - Changing core commands and their parameters.
 
 ---
 
-## Appendix A. Full Catalog of Core Commands (170)
+## Appendix A. Full core command catalog (170)
 
-Below is a snapshot of `engine::commands()` as of 2026-11-08. The "Menu" column shows where the command is available in the UI; empty means the command exists in the API/CLI/MCP but may not have a button. The implementation must classify every row (Tool/Dialog/Immediate/Input/Internal) and not lose any.
+Below is a snapshot of `engine::commands()` as of 2026-11-08. The "Menu" column shows where the command is available in the interface; empty — the command exists in the API/CLI/MCP but may have no button. The implementation must classify every row (Tool/Dialog/Immediate/Input/Internal) and lose none.
 
-| # | id | Command (label) | Aliases | Menu |
-| ---:| --- | --- | --- | --- |
+| No. | id | Command (label) | Aliases | Menu |
+|---:|---|---|---|---|
 | 1 | `new` | New | — | — |
 | 2 | `open` | Open | — | — |
 | 3 | `highrise` | Synthetic Highrise | — | — |
@@ -1252,19 +1355,19 @@ Below is a snapshot of `engine::commands()` as of 2026-11-08. The "Menu" column 
 
 ---
 
-## Appendix B. Default BIMCraft Profile: New Chords
+## Appendix B. BIMCraft default profile: new chords
 
-> **TS-009 (Priority):** the rows with `Ctrl+D` = Move and Home = `Ctrl+Shift+H` in this table do not apply to BIMCraft: `Ctrl+D` is free, Home is `Ctrl+U`.
+> **SPEC-009 (takes precedence):** the rows with `Ctrl+D` = Move and Home = `Ctrl+Shift+H` in this table do not apply to BIMCraft: `Ctrl+D` is free, Home is `Ctrl+U`.
 
-Below is the **normative** part of the default BIMCraft profile. All old two-letter sequences (`WA`, `DR`, `WN`, `RM`, `CL`, `DI`, `TG`, `MV`, `CO`, `RO`, `MM`, `DM`, `AL`, `OF`, `DW`, `ZF`, `TL`, `CS`, `PP`, `NP`, `SA`, `VV`, `EH`, `HH`, `KS`, `UN`, `GD`, …) are preserved as default bindings and are not listed row by row to avoid duplicating `SHORTCUTS` and command aliases.
+Below is the **normative** part of the BIMCraft default profile. All the old two-letter sequences (`WA`, `DR`, `WN`, `RM`, `CL`, `DI`, `TG`, `MV`, `CO`, `RO`, `MM`, `DM`, `AL`, `OF`, `DW`, `ZF`, `TL`, `CS`, `PP`, `NP`, `SA`, `VV`, `EH`, `HH`, `KS`, `UN`, `GD`, …) are kept as default bindings and are not listed line by line, so that the table does not duplicate `SHORTCUTS` and the command aliases.
 
-| Action | ID | Default Chords | Note |
-| --- | --- | --- | --- |
-| Move | `cmd.move` | `Ctrl+D`, `MV` | `Ctrl+D` is a user requirement; `MV` is for compatibility *(Note: overridden by TS-009)* |
-| Copy | `cmd.copy` | `Ctrl+Shift+D`, `CO` | We do not take `Ctrl+C`: it belongs to text fields |
+| Action | ID | Default chords | Note |
+|---|---|---|---|
+| Move | `cmd.move` | `Ctrl+D`, `MV` | `Ctrl+D` is the user requirement; `MV` is compatibility |
+| Copy | `cmd.copy` | `Ctrl+Shift+D`, `CO` | we do not take `Ctrl+C`: it belongs to text fields |
 | Rotate | `cmd.rotate` | `Ctrl+R`, `RO` | as in Archicad |
-| Mirror (pick axis) | `cmd.mirror` | `Ctrl+M`, `MM` | on macOS `Cmd+M` might be "minimize window" — warning |
-| Mirror (draw axis) | `cmd.mirror` (draw mode) | `Ctrl+Shift+M`, `DM` | separate ID if mode is split |
+| Mirror (pick axis) | `cmd.mirror` | `Ctrl+M`, `MM` | on macOS `Cmd+M` may be "minimize window" — warning |
+| Mirror (draw axis) | `cmd.mirror` (draw mode) | `Ctrl+Shift+M`, `DM` | a separate ID if the mode is split |
 | Offset | `cmd.offset` | `Ctrl+Shift+O`, `OF` | |
 | Trim/Extend to Corner | `cmd.corner` | `Ctrl+T`, `TR` | |
 | Split | `cmd.split` | `Ctrl+Shift+T`, `SL` | |
@@ -1273,7 +1376,7 @@ Below is the **normative** part of the default BIMCraft profile. All old two-let
 | Undo | `cmd.undo` | `Ctrl+Z` | |
 | Redo | `cmd.redo` | `Ctrl+Shift+Z`, `Ctrl+Y` | |
 | Save | `cmd.save` | `Ctrl+S` | |
-| Save As | `ui.file.save_as` | `Ctrl+Shift+S` | separate behavior: path selection |
+| Save As | `ui.file.save_as` | `Ctrl+Shift+S` | separate behavior: choosing a path |
 | Open | `cmd.open` | `Ctrl+O` | |
 | New | `cmd.new` | `Ctrl+N` | |
 | Find | `ui.find` | `Ctrl+K` | |
@@ -1281,42 +1384,42 @@ Below is the **normative** part of the default BIMCraft profile. All old two-let
 | Properties | `ui.palette.properties` | `Ctrl+1`, `PP`, `VP` | |
 | Project Browser | `ui.palette.browser` | `Ctrl+2`, `NP` | `Ctrl+2` is a new default chord |
 | Export PDF | `ui.file.export_pdf` | `Ctrl+P` | |
-| Start Page / Home | `ui.view.home` | `Ctrl+Shift+H` | moved from `Ctrl+D` *(Note: overridden by TS-009)* |
-| Shortcuts | `ui.settings.shortcuts` | `Ctrl+Shift+K`, `KS` | `Ctrl+K` is taken by Find |
+| Start page / Home | `ui.view.home` | `Ctrl+Shift+H` | moved off `Ctrl+D` |
+| Keyboard Shortcuts | `ui.settings.shortcuts` | `Ctrl+Shift+K`, `KS` | `Ctrl+K` is taken by Find |
 | 3D View | `ui.view.3d` | `F3`, `3D` | |
 | Floor Plan | `ui.view.plan` | `F2` | |
-| Zoom Fit | `ui.view.zoom_fit` | `Ctrl+0`, `ZF`, `ZE`, `ZA` | |
+| Zoom to Fit | `ui.view.zoom_fit` | `Ctrl+0`, `ZF`, `ZE`, `ZA` | |
 | Thin Lines | `ui.view.thin_lines` | `TL` | |
-| Alignment Guides | `ui.view.alignment_guides` | `F8`, `F11` | |
+| Alignment guides | `ui.view.alignment_guides` | `F8`, `F11` | |
 | Visibility/Graphics | `ui.view.vg` | `VV`, `VG` | |
-| Hide Element | `ui.view.hide_element` | `EH` | |
-| Hide Category | `ui.view.hide_category` | `VH` | |
-| Temp Hide/Isolate | `ui.view.temp_hide_*` | `HH`, `HC`, `HI`, `IC`, `HR`, `RH` | |
+| Hide element | `ui.view.hide_element` | `EH` | |
+| Hide category | `ui.view.hide_category` | `VH` | |
+| Temporary hide/isolate | `ui.view.temp_hide_*` | `HH`, `HC`, `HI`, `IC`, `HR`, `RH` | |
 | Unhide | `ui.view.unhide` | `EU`, `UE`, `VU` | |
-| Visual Style | `ui.view.visual_style` | `WF`, `HL`, `SD` | |
+| 3D style | `ui.view.visual_style` | `WF`, `HL`, `SD` | |
 | Graphic Display Options | `ui.view.display_options` | `GD` | |
 | Snaps | `ui.snap.*` | `SE`, `SM`, `SI`, `SC`, `SP`, `SQ`, `ST`, `SN`, `SO`, `SS` | |
-| Wall | `cmd.wall` | `WA` | chord is not assigned by default: `Ctrl+W` on macOS closes the window; user can assign their own |
+| Wall | `cmd.wall` | `WA` | no chord assigned by default: `Ctrl+W` closes the window on macOS; the user can assign their own |
 | Door | `cmd.door` | `DR` | |
 | Window | `cmd.window` | `WN` | |
 | Room | `cmd.room` | `RM` | |
-| Column | `cmd.column` / `cmd.structural_column` | `CL` | contextually, as it is now |
+| Column | `cmd.column` / `cmd.structural_column` | `CL` | contextually, as now |
 | Dimension | `cmd.dimension` | `DI` | |
 | Tag | `cmd.tag` | `TG` | |
 | Text | `cmd.text` | `TX` | |
 | Section | `cmd.section` | `CR` | |
 | Measure | `cmd.measure` | `ME` | |
 
-If the implementation splits `Mirror Pick Axis` and `Mirror Draw Axis` into two actions, `Ctrl+M` and `Ctrl+Shift+M` are assigned to them; if it leaves it as one action with a `draw` parameter, both bindings lead to `cmd.mirror` with different modes. The decision is to be fixed in the registry and test.
+If the implementation splits `Mirror Pick Axis` and `Mirror Draw Axis` into two actions, `Ctrl+M` and `Ctrl+Shift+M` are assigned to them; if it keeps them as one action with a `draw` parameter, both bindings lead to `cmd.mirror` with different modes. The decision must be recorded in the registry and a test.
 
 ---
 
-## Appendix C. Russian Layout Table (JCUKEN → Physical Key)
+## Appendix C. Russian layout table (ЙЦУКЕН → physical key)
 
-During import and when typing `Ctrl+В`/`Ctrl+С`/…, the symbol is converted to the US layout physical key. The table applies to letters and `ё`; for other symbols, `Key::from_name` and synonyms are used.
+On import and when entering `Ctrl+В`/`Ctrl+С`/…, a character is converted to a physical key of the US layout. The table applies to letters and `ё`; for other characters `Key::from_name` and the synonyms are used.
 
-| Physical Key (US) | Russian lowercase | Russian uppercase |
-| --- | --- | --- |
+| Physical key (US) | Russian lowercase | Russian uppercase |
+|---|---|---|
 | `Q` | `й` | `Й` |
 | `W` | `ц` | `Ц` |
 | `E` | `у` | `У` |
@@ -1353,6 +1456,7 @@ During import and when typing `Ctrl+В`/`Ctrl+С`/…, the symbol is converted t
 | `` ` `` | `ё` | `Ё` |
 
 Examples:
+
 - `Ctrl+В` → `Ctrl+D`;
 - `Ctrl+С` → `Ctrl+C`;
 - `Ctrl+М` → `Ctrl+V`;
@@ -1361,46 +1465,46 @@ Examples:
 - `Ctrl+Ж` → `Ctrl+;`;
 - `Ctrl+Ю` → `Ctrl+.`.
 
-Note: Cyrillic `А` and `Ф` are **different** physical keys (`F` and `A` respectively), just as `М` and `Ь` are (`V` and `M`). Therefore, `Ctrl+А` and `Ctrl+Ф` do not conflict, and `Ctrl+М` is `Ctrl+V`.
+Note: the Cyrillic `А` and `Ф` are **different** physical keys (`F` and `A` respectively), as are `М` and `Ь` (`V` and `M`). That is why `Ctrl+А` and `Ctrl+Ф` do not conflict, and `Ctrl+М` is `Ctrl+V`.
 
-If a symbol is missing from the table, import reports an error with the line number; the app does not guess.
+If a character is not in the table, the import reports an error with the line number; the application does not guess.
 
 ---
 
-## Appendix D. Reserved and System Combinations
+## Appendix D. Reserved and system combinations
 
-### D.1. Hard Reserved by the Application
+### D.1. Hard-reserved by the application
 
 | Key | Why |
-| --- | --- |
-| `Esc` | Cancel/close dialog, tool, menu |
-| `Enter` | Finish length input, construction, confirm |
+|---|---|
+| `Esc` | Cancel/close a dialog, tool, menu |
+| `Enter` | Finish entering a length, construction, confirmation |
 | `Tab` | Cyclic selection, focus |
-| `Backspace` | Delete last character/step |
+| `Backspace` | Delete the last character/step |
 | `Up`/`Down`/`Left`/`Right` | Navigation, movement, modification |
-| `Space` | Contextual tool action: flip, component rotation, size mode |
+| `Space` | The tool's contextual action: flip, rotate component, dimension mode |
 | Single `Ctrl`, `Shift`, `Alt`, `Meta` | Not a binding |
 
-### D.2. Assignable, but with Warning
+### D.2. Assignable, but with a warning
 
 | Combination | Risk |
-| --- | --- |
-| `Delete` | May conflict with deletion in text fields; in a field, the field has priority |
-| `F1`–`F12` | Some may be occupied by OS/window/driver |
-| `Ctrl+Alt+…` | AltGr on Windows; may generate a symbol |
+|---|---|
+| `Delete` | May conflict with deletion in a text field; in a field the field wins |
+| `F1`–`F12` | Some may be taken by the OS/window/driver |
+| `Ctrl+Alt+…` | AltGr on Windows; may generate a character |
 | `Ctrl+Shift+Esc` | Windows Task Manager |
-| `Alt+F4`, `Alt+Tab`, `Ctrl+Esc` | Intercepted by OS |
+| `Alt+F4`, `Alt+Tab`, `Ctrl+Esc` | Intercepted by the OS |
 | `Cmd+Tab`, `Cmd+Space`, `Cmd+Q`, `Cmd+H`, `Cmd+M`, `` Cmd+` `` | Intercepted by macOS |
 | `Win+L`, `Win+D`, `Win+Tab`, `Win+...` | Intercepted by Windows |
 | `Ctrl+Alt+Del` | Does not reach the application |
 
-When assigning such combinations, show a yellow warning "may not work: combination is intercepted by the system". During import — accept with a warning. Hard reserved (D.1) — do not accept and explain the reason.
+When assigning such combinations show a yellow warning "may not work: the combination is intercepted by the system". On import — accept with a warning. Hard-reserved ones (D.1) — do not accept, and explain the reason.
 
 ---
 
-## Appendix E. Minimal `settings.json` Example After Migration
+## Appendix E. Minimal example of `settings.json` after migration
 
-> **TS-009 (Priority):** the example below shows `Ctrl+D` on Move and `Ctrl+Shift+H` on Home; per TS-009, in BIMCraft `Ctrl+D` is free, Home is `Ctrl+U`.
+> **SPEC-009 (takes precedence):** the example below shows `Ctrl+D` for Move and `Ctrl+Shift+H` for Home; per SPEC-009, in BIMCraft `Ctrl+D` is free and Home is `Ctrl+U`.
 
 ```json
 {
@@ -1418,7 +1522,7 @@ When assigning such combinations, show a yellow warning "may not work: combinati
 }
 ```
 
-Old fragment that must migrate without loss:
+The old fragment that must migrate without loss:
 
 ```json
 {
@@ -1446,55 +1550,55 @@ After migration:
 }
 ```
 
-Note: in the old format, `"ZW"` could be a user key for `Floor`; in the new one, it becomes the sequence `ZW`. If the `Floor` action is not found, the line is skipped with a warning, and the rest are loaded.
+Note: in the old format `"ZW"` could be a user key for `Floor`; in the new one it becomes the sequence `ZW`. If the `Floor` action is not found, the line is skipped with a warning and the rest are loaded.
 
 ---
 
-## Appendix F. Implementation Checklist
+## Appendix F. Implementation checklist
 
-- [ ] Action registry covers all 170 commands and all UI actions.
-- [ ] `Ctrl+D` = Move; Home = `Ctrl+Shift+H` *(Note: overridden by TS-009)*.
+- [ ] The action registry covers all 170 commands and all UI actions.
+- [ ] `Ctrl+D` = Move; Home = `Ctrl+Shift+H`.
 - [ ] `Ctrl+В` = `Ctrl+D`; `WA` works on the Russian layout.
-- [ ] Multiple bindings per action; all work.
-- [ ] Exact modifier match; `Ctrl+D` ≠ `Ctrl+Shift+D`.
+- [ ] Several bindings per action; all work.
+- [ ] Exact modifier matching; `Ctrl+D` ≠ `Ctrl+Shift+D`.
 - [ ] Text fields are not intercepted.
-- [ ] Modal dialogs/menus do not execute global bindings.
+- [ ] Modal dialogs/menus do not run global bindings.
 - [ ] Dialog: add/change/delete/reset, search, filters, conflicts.
 - [ ] Import/export `.txt`/`.bks`/`.json`; preview, errors, round-trip.
-- [ ] Export "Help (Markdown)…": all actions, active + default bindings, commands without keys, conflicts, grouping, valid Markdown.
-- [ ] Importing `.md` is rejected with the message "this is help documentation".
+- [ ] "Reference (Markdown)…" export: all actions, active + default bindings, commands without keys, conflicts, grouping, valid Markdown.
+- [ ] Importing `.md` is rejected with the message "this is a reference".
 - [ ] `settings.json` v2 + migration of the old format.
-- [ ] Ribbon/menu/Find tooltips show multiple bindings.
-- [ ] Translations, README, `docs/areas/desktop.md`, new `docs/areas/shortcuts.md`.
-- [ ] Tests from section 8; `fmt`, `clippy`, `test --workspace` are green.
-- [ ] No regressions in autosave/undo/project saving.
+- [ ] Ribbon/menu/Find tooltips show several bindings.
+- [ ] Translations, README, `docs/areas/desktop.md`, the new `docs/areas/shortcuts.md`.
+- [ ] The tests from section 8; `fmt`, `clippy`, `test --workspace` green.
+- [ ] No regressions of autosave/undo/saving the project.
 
 ---
 
-## Appendix G. Markdown Help Example
+## Appendix G. Markdown reference example
 
-Below is a non-normative template, an example of what the user sees after clicking "Help (Markdown)…". The composition of sections and columns can be refined, but the principle must remain: **all actions**, **active and default bindings**, **commands without keys**, grouping, conflicts, reserved keys.
+Below is not a normative template but an example of what the user sees after "Reference (Markdown)…". The set of sections and columns may be refined, but the principle must remain: **all actions**, **active and default bindings**, **commands without keys**, grouping, conflicts, reserved keys.
 
-
-# BIMCraft — Hotkeys
+````markdown
+# BIMCraft — keyboard shortcuts
 
 Profile: BIMCraft · Version: 2 · Platform: Linux · Generated: 2026-11-08
 
-## How to Read
+## How to read
 
-- **Active** — combinations that will trigger right now.
-- **Default** — built-in values; they are visible even if you changed or removed them.
-- **Source** — "default", "user", "modified", "deleted".
-- `Ctrl+D` and `Ctrl+В` are the same physical key; the help shows the canonical form and a hint for the Russian layout.
+- **Active** — the combinations that will fire now.
+- **Default** — the built-in values; they are visible even if you changed or deleted them.
+- **Source** — "default", "custom", "changed", "deleted".
+- `Ctrl+D` and `Ctrl+В` are one physical key; the reference shows the canonical form and a hint for the Russian layout.
 
 ## Contents
 
 - [File](#file)
-- [Edit](#edit)
+- [Editing](#editing)
 - [Architecture](#architecture)
 - [Views](#views)
-- [Commands Without Keys](#commands-without-keys)
-- [Reserved and System Combinations](#reserved-and-system-combinations)
+- [Commands without keys](#commands-without-keys)
+- [Reserved and system combinations](#reserved-and-system-combinations)
 - [Conflicts](#conflicts)
 
 ## File
@@ -1503,54 +1607,181 @@ Profile: BIMCraft · Version: 2 · Platform: Linux · Generated: 2026-11-08
 |---|---|---|---|---|---|
 | Save | `cmd.save` | `Ctrl+S` | `Ctrl+S` | default | |
 | Save As | `ui.file.save_as` | `Ctrl+Shift+S` | `Ctrl+Shift+S` | default | |
-| Open | `cmd.open` | `Ctrl+O` | `Ctrl+O` | default | requires path, opens dialog |
+| Open | `cmd.open` | `Ctrl+O` | `Ctrl+O` | default | requires a path, opens a dialog |
 | New | `cmd.new` | `Ctrl+N` | `Ctrl+N` | default | |
 
-## Edit
+## Editing
 
 | Command | ID | Active | Default | Source | Note |
 |---|---|---|---|---|---|
-| Move | `cmd.move` | `Ctrl+D` (Ctrl+В), `Ctrl+Shift+M`, `MV` | `MV` | user | `Ctrl+D` — as in Archicad |
-| Copy | `cmd.copy` | `Ctrl+Shift+D`, `CO` | `CO` | user | We do not take `Ctrl+C` |
-| Rotate | `cmd.rotate` | `Ctrl+R`, `RO` | `RO` | user | |
-| Delete | `cmd.delete` | `Delete`, `DE` | `DE` | user | in a text field, `Delete` belongs to the field |
+| Move | `cmd.move` | `Ctrl+D` (Ctrl+В), `Ctrl+Shift+M`, `MV` | `MV` | custom | `Ctrl+D` — as in Archicad |
+| Copy | `cmd.copy` | `Ctrl+Shift+D`, `CO` | `CO` | custom | we do not take `Ctrl+C` |
+| Rotate | `cmd.rotate` | `Ctrl+R`, `RO` | `RO` | custom | |
+| Delete | `cmd.delete` | `Delete`, `DE` | `DE` | custom | in a text field `Delete` belongs to the field |
 
 ## Architecture
 
 | Command | ID | Active | Default | Source | Note |
 |---|---|---|---|---|---|
-| Wall | `cmd.wall` | `WA` | `WA` | default | chord is not assigned by default |
+| Wall | `cmd.wall` | `WA` | `WA` | default | no chord assigned by default |
 | Door | `cmd.door` | `DR` | `DR` | default | |
 | Window | `cmd.window` | `WN` | `WN` | default | |
-| Column | `cmd.column` | `CL` | `CL` | default | on the Structure tab, `CL` → Structural Column |
+| Column | `cmd.column` | `CL` | `CL` | default | on the Structure tab `CL` → Structural Column |
 
 ## Views
 
 | Command | ID | Active | Default | Source | Note |
 |---|---|---|---|---|---|
-| 3D View | `ui.view.3d` | `F3`, `3D` | `3D` | user | |
-| Floor Plan | `ui.view.plan` | `F2` | — | user | |
-| Zoom Fit | `ui.view.zoom_fit` | `Ctrl+0`, `ZF`, `ZE`, `ZA` | `ZF`, `ZE`, `ZA` | user | |
-| Properties | `ui.palette.properties` | `Ctrl+1`, `PP`, `VP` | `PP`, `VP` | user | |
+| 3D View | `ui.view.3d` | `F3`, `3D` | `3D` | custom | |
+| Floor Plan | `ui.view.plan` | `F2` | — | custom | |
+| Zoom to Fit | `ui.view.zoom_fit` | `Ctrl+0`, `ZF`, `ZE`, `ZA` | `ZF`, `ZE`, `ZA` | custom | |
+| Properties | `ui.palette.properties` | `Ctrl+1`, `PP`, `VP` | `PP`, `VP` | custom | |
 
-## Commands Without Keys
+## Commands without keys
 
-| Command | ID | Category | Why no key |
+| Command | ID | Category | Why without keys |
 |---|---|---|---|
-| Reference Tower | `cmd.tower` | Other | requires parameters, available via API/CLI |
-| Import CAD | `cmd.import_cad` | File | requires path, opened from menu |
-| Schedule | `cmd.schedule` | Annotations | requires parameters, opened from dialog |
+| Reference Tower | `cmd.tower` | Other | requires parameters, available through the API/CLI |
+| Import CAD | `cmd.import_cad` | File | requires a path, opened from the menu |
+| Schedule | `cmd.schedule` | Annotations | requires parameters, opened from a dialog |
 
-## Reserved and System Combinations
+## Reserved and system combinations
 
 | Combination | Status | Reason |
 |---|---|---|
-| `Esc` | reserved by app | cancel/close |
-| `Enter` | reserved by app | finish input |
-| `Tab` | reserved by app | cyclic selection/focus |
-| `Alt+Tab` | intercepted by OS | window switching |
-| `Cmd+Tab` | intercepted by OS (macOS) | app switching |
+| `Esc` | reserved by the application | cancel/close |
+| `Enter` | reserved by the application | finish input |
+| `Tab` | reserved by the application | cyclic selection/focus |
+| `Alt+Tab` | intercepted by the OS | window switching |
+| `Cmd+Tab` | intercepted by the OS (macOS) | application switching |
 
 ## Conflicts
 
-No conflicts. If `Ctrl+D` were assigned to both "Move" and "Copy", there would be a row here with both actions and a suggestion to replace the owner.
+There are no conflicts. If `Ctrl+D` were assigned both to "Move" and to "Copy", there would be a row here with both actions and a suggestion to replace the owner.
+
+````
+
+---
+
+## Appendix H. Change 2026-11-12: Home is back on `Ctrl+D`
+
+| What | Was (SPEC-009) | Now |
+|---|---|---|
+| Home / start page | `Ctrl+U` | `Ctrl+D` |
+| `Ctrl+U` | Home | free |
+| `Ctrl+D` | free | Home in the BIMCraft profile; in the Archicad profile it stays Move |
+| `F8` | guides | guides (unchanged) |
+| `F11` | free | free |
+
+Rules:
+
+1. The default Home binding in the BIMCraft profile is `Ctrl+D`; `Ctrl+U` is removed from the default profile.
+2. A user binding of `Ctrl+U` or `Ctrl+D` assigned manually after the update is preserved.
+3. In a text field `Ctrl+D` does not open Home; in the note editor `Ctrl+U` remains underline.
+4. The tooltip of the Back button on the start page shows `Ctrl+D` again.
+5. `docs/areas/shortcuts.md`, `docs/areas/desktop.md` and `README.md` are updated.
+
+---
+
+## Appendix I. Full implemented functionality (2026-11-12)
+
+Below is a summary of what is actually implemented in `crates/ui-egui` and `settings.json` after all the refinements. Table I.5 shows the state before the work and the final state.
+
+### I.1. Action and binding model
+
+- A single action registry: `cmd.<id>` for core commands, `ui.<area>.<action>` for window actions, `legacy.<name>` for old actions without a core command.
+- An action has a category, a kind (`Tool`, `Dialog`, `Immediate`, `Input`, `Internal`), default bindings and, if needed, a menu path.
+- One action can have several bindings (up to 32). The overall limit is 4096 bindings.
+- A binding is a chord (`Ctrl+D`, `Ctrl+Shift+D`, `F8`) or a sequence of two/three keys (`WA`, `MV`, `BMM`). Three-key sequences are set by the file; input gives priority to a two-key binding if it exists.
+- Chords and sequences are read from the physical key (`physical_key`), not from `Event::Text`; `Ctrl+D` and `Ctrl+В` are one key, `WA` works on the Russian layout.
+- Modifiers are compared exactly; `Ctrl+D` and `Ctrl+Shift+D` coexist; key repeat is ignored.
+- `Ctrl+D` is not hard-wired in the code: it is the default Home binding, which can be deleted, reassigned to another action or restored via Reset/Reset All. Only `Esc`, `Enter`, `Tab`, `Backspace`, `Space` and the arrows are hard-reserved.
+- In the BIMCraft profile Home is `Ctrl+D`, `Ctrl+U` is free; guides are `F8` only, `F11` is free. In the Archicad profile `Ctrl+D` is taken by Move.
+- The old two-letter commands (`WA`, `DR`, `WN`, `RM`, `CL`, `DI`, `TG`, `MV`, `CO`, `RO`, `MM`, `DM`, `AL`, `OF`, `DW`, `ZF`, `TL`, `CS`, `PP`, `NP`, `SA`, `VV`, `EH`, `HH`, `KS`, …) are kept as default bindings.
+
+### I.2. Storage and migration
+
+- `Settings.shortcuts` is a version 2 object: `profile` and a `bindings` array with `action` and `keys`.
+- The old `{"WA": "Wall"}` format migrates on load; after migration the file is rewritten in version 2.
+- The full effective set is stored, not just the differences from the default profile; a binding deleted by the user does not come back with an update.
+- Limits: `settings.json` up to 1 MiB, `MAX_SHORTCUTS = 4096`, `MAX_ACTIONS = 512`.
+- `New`/`Open` do not touch bindings: these are application settings.
+
+### I.3. Keyboard Shortcuts dialog
+
+- Opening: Manage > Shortcuts, `KS`, `Ctrl+Shift+K`.
+- Search by name, id and any active binding.
+- Filters: `All`, `Assigned`, `Without keys`, `Changed`, `Custom`, `CantChanged`.
+- `Changed` shows only Source = Changed, including when an extra combination was added to a default one.
+- `Custom` shows bindings created where there were no defaults.
+- `CantChanged` shows only non-bindable actions that already have combinations; they are read-only.
+- Actions that cannot be reassigned and have no keys do not appear in the list.
+- Profile selection and `Apply Profile` are moved to a separate block, visually separated from the filters.
+- The window width is 1120 px; the table has Command, Category, Key combinations, Source, Actions columns.
+- The header sorts on click; a repeated click flips the direction; the active column shows an `↑`/`↓` arrow; the default sort is Category ascending. Headers are separated by vertical lines.
+- Combination chip: clicking the text edits, `×` on the right deletes; the cross is balanced in padding; there is no separate pencil button; `+` adds a new combination.
+- If there are no combinations, the em dash `—` is not shown and `Remove All` is hidden. `Reset` remains for bindable actions.
+- There is no longer a second line with `cmd.*` under the command name; the exact id is shown in the hover tooltip.
+- Rows are compact: top alignment, zero vertical padding, a thin 2 px separator.
+- The list scrolls with a bar at the right edge; the content does not go under the bar.
+- `Esc` closes the whole window both in the normal list and in combination input mode (an unfinished capture is cancelled).
+
+### I.4. Import, export and reference
+
+- Import: `.txt`, `.bks`, `.json`, Revit XML and legacy lines `WA - Wall` / `WA = Wall`.
+- Import has a preview: parsed bindings, errors with line numbers, conflicts; "Replace all" and "Add" modes; `shortcuts.bak` is written before replacement.
+- Import limits: 256 KiB, 10,000 lines, 4096 bindings.
+- Export is a deterministic text `.txt`/`.bks`, atomic write. There is no separate JSON export button; JSON remains the import format and the `settings.json` format.
+- The Markdown reference is written to `bimcraft-shortcuts.md`: all actions, per-category tables with only the **Command** and **Active** columns, Active containing all active combinations including custom ones; the table of reserved and system combinations remains separate.
+- After saving `.md`/`.txt` a single clickable link to the file is shown; the file opens in the system application associated with the extension (e.g. MarkText for `.md`), not in the browser.
+- Importing `.md` is rejected: Markdown is a reference, not a backup.
+- Find (`Ctrl+K`) searches actions not only by name/id but also by all bindings, including those that did not fit in the tooltip.
+
+### I.5. The "before → after" table in order of the refinements
+
+| No. | Area | Before the work | Now |
+|---:|---|---|---|
+| 1 | Action catalog | a separate list of names in `shortcuts.rs`; some core commands not covered | a single `cmd.*` / `ui.*` / `legacy.*` registry; all core commands classified |
+| 2 | Bindings | one two-letter binding per action | several bindings per action, up to 32 |
+| 3 | Chords | only hard-coded `Ctrl+S`, `Ctrl+O`, `Ctrl+D`, etc. | configurable chords in the registry and the file |
+| 4 | Sequences | two letters through `Event::Text` | two- and three-key by physical keys |
+| 5 | Layout | `WA` did not work on the Russian layout | physical key; `WA` and `Ctrl+В` work |
+| 6 | Modifiers | `consume_key` with loose matching | exact matching, `Ctrl+D ≠ Ctrl+Shift+D` |
+| 7 | Key repeat | holding could repeat the command | repeat is ignored |
+| 8 | Profiles | effectively one set | BIMCraft, Revit-like, Archicad-like, Empty and Custom |
+| 9 | `Ctrl+D` | hard-wired to Home | an ordinary default Home binding; reassignable |
+| 10 | Home | `Ctrl+U` after SPEC-009 | `Ctrl+D`; `Ctrl+U` free |
+| 11 | Guides | `F8` and `F11` | `F8` only; `F11` free |
+| 12 | `settings.json` | old `key → name` object, 64 KiB | version 2, full set, 1 MiB, migration |
+| 13 | Limits | 256 bindings | 4096 bindings and 512 actions |
+| 14 | Source | default / custom / changed / deleted | `CantChanged` added |
+| 15 | Non-bindable actions | shown as ordinary, sometimes with `Remove All` | read-only, no `+`, `Reset`, `Remove All`; hidden when without keys |
+| 16 | Filters | All, Assigned, Unassigned, Changed | Custom and CantChanged added |
+| 17 | Changed | showed everything except default | strictly only Source = Changed |
+| 18 | Additional combination | was not always reflected as a change | adding to the defaults yields Changed |
+| 19 | Custom | no separate filter | a separate filter for bindings without a default basis |
+| 20 | Dialog search | by name/id and some bindings | by name, id and all bindings |
+| 21 | Find `Ctrl+K` | name/id and the first tooltip | all bindings, including `+N` |
+| 22 | Dialog window | 900 px, columns with auto width | 1120 px, fixed widths, a wide Command column |
+| 23 | Header | no sorting | sorting by every column, `↑`/`↓` arrows, separators; Category by default |
+| 24 | Profile in the dialog | on the same row as the filters | a separate block below the filters |
+| 25 | Rows | vertical centering, large padding | top alignment, compact height, a thin separator |
+| 26 | Combination chip | `WA ×` deleted, the pencil edited | clicking the text edits, `×` on the right deletes, no pencil |
+| 27 | Empty combinations | `—` was shown, `Remove All` always | `—` removed, `Remove All` only when combinations exist |
+| 28 | Command id | a second line under the name | hidden; shown in the tooltip |
+| 29 | `Esc` | in capture it closed only the capture | closes the whole window |
+| 30 | Scrolling | the bar was inset from the edge, rows went under it | the bar is at the right edge, the content ends before it |
+| 31 | Import | JSON/XML/legacy only, no preview | `.txt`/`.bks`/`.json`/XML, preview, errors, modes, backup |
+| 32 | Export | text and JSON | text only; the JSON button removed, JSON import kept |
+| 33 | Markdown | 6 columns, Starting/Source/Note, extra sections | 2 columns Command/Active; all active bindings, including custom |
+| 34 | Link to the saved file | the path was duplicated as text and as a link | one link, opens in the system application |
+| 35 | `.md` import | `.md` was among the import filters | `.md` is rejected as a reference |
+| 36 | Documentation | was in Russian | `docs/areas/shortcuts.md` in English; new `.md` files in English |
+| 37 | Checks | there was no registry coverage check | unit tests for the registry, parser, Markdown, three-key sequences, Source added |
+
+### I.6. Limitations that remain deliberately
+
+- Commands with mandatory parameters and without an existing UI collector (`Conduit Fill`, `Schedule`, `Render`, etc.) are not assignable: a key cannot collect parameters by itself. They are shown only if they already have a binding, in the `CantChanged` group, and read-only.
+- Three-key sequences are set by the file; the dialog capture adds a sequence after two keys.
+- In text fields `Ctrl+D` belongs to the field; in the note editor `Ctrl+U` remains underline.
+- `.md` is a reference only; the backup is `.bks`, `.txt` or `.json`.
