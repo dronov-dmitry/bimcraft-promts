@@ -457,10 +457,17 @@ Questions for discussion:
 
 ### 15.1. What will already be in `main` by the time of the rebase
 
+The contract from SPEC-019 §15.2 — called R6a there — is already in `main`, so everything below in this
+PR is an addition, with no rewriting.
+
 - `panels_hidden`, panel keys `tab:…`, the current tab in `ribbon::panel`, the panel checkbox in Edit
   Tools, "Show Every Panel", the empty tab.
-- `Docking::from_json(v, policy, known)` and `Policy::{Live, Preset}`.
-- `Palette::known()` — a single point of built-in palette enumeration (instead of `Palette::ALL`).
+- `Palette::known() -> Vec<Palette>` — the single palette enumeration point (instead of `Palette::ALL`);
+  it is called by `dock.rs`, `settings.rs` (`palette_switches`), and the preset editor.
+- `Docking::from_json(v, policy, known)`, `Docking::to_json(known)`, `Palette::named(name, known)`;
+  `Policy::{Live, Preset}`.
+- `Docking::unknown`: unknown palette names (including `plugin:<id>:<id>`) are preserved in `closed` on
+  read and write, so no migration is needed in this PR.
 - `Preset { panels_hidden, profile }`, `apply_preset` with the profile first, "Reset to Standard View".
 - The profile rule at draw time: in Rev the Tools palette is not drawn and is not written to the file.
 - Plugin ribbon panels **already** hide and are part of presets — their keys
@@ -468,23 +475,25 @@ Questions for discussion:
 
 ### 15.2. Rebase checklist (follow in order)
 
+The contract is already in `main` (§15.1), so every step here is purely additive.
+
 1. **`Palette::Plugin(usize)` + registry.** `BimApp::plugin_palettes: Vec<PluginPalette>`; populated
    when plugins are installed (next to `plugin_tabs`, `plugins.rs`). The index is the plugin order, then
-   `panels[].order`, then `id`; it is not written to the file.
-2. **`Palette::known()` is extended with the registry.** The signature from SPEC-019 does not change:
-   `known()` must return the built-in and connected plugin palettes. If the registry is needed in
-   `named`/`from_json` — pass it the same way as `known` today.
-3. **Palette names** — `plugin:<plugin id>:<panel id>` in `to_json`/`closed`; `Policy::Preset` still
-   skips unknown names, `Policy::Live` does not open what does not exist.
-4. **Do not touch plugin ribbon panels.** Their keys stay `tab:plugin:<tab>/<panel>`;
-   `panels[].id` is the name of a **palette**, not of a ribbon panel. Do not mix the two namespaces.
-5. **"Reset to Standard View"** closes plugin palettes by itself, because they are not in
-   `Docking::default()`/`revit()`. Nothing needs to be added to the reset.
-6. **Do not change `Policy`, `profile`, the reset, or `palette_switches`.** If new settings behavior is
-   needed for plugin panels — a separate PR.
-7. **i18n catalogs.** After the rebase — `cargo i18n update` (`rustfmt` first); do not resolve conflicts
+   `panels[].order`, then `id`; it is not written to the file. The UI takes the panel name from the
+   registry entry, not from the index.
+2. **Extend `Palette::known()`.** Append `Palette::Plugin(0..registry.len())` to the built-in list. The
+   signature stays `fn known() -> Vec<Palette>` — this is the only line of palette enumeration PR #2
+   changes; `settings.rs`, the preset editor, and the layout code pick the new palettes up automatically.
+3. **Names.** The palette-name function returns `plugin:<plugin id>:<panel id>` for `Plugin`; the parse
+   side already preserves unknown names (PR #1, SPEC-019 R6), so nothing else is needed. `Policy::Preset`
+   and `Policy::Live` stay untouched.
+4. **Nothing to add to the reset** — plugin palettes are not in `Docking::default()`/`revit()`, so
+   "Reset to Standard View" closes them already.
+5. **Do not change** `Policy`, `profile`, the preset editor, `palette_switches`, or `panels_hidden`. If
+   plugin panels need new settings behavior — a separate PR.
+6. **i18n catalogs.** After the rebase — `cargo i18n update` (`rustfmt` first); do not resolve conflicts
    in `.po` manually: regenerate.
-8. **Tests.** Own ones — in `tests/plugin_panels.rs` and as unit tests in `crates/plugin`; do not rewrite
+7. **Tests.** Own ones — in `tests/plugin_panels.rs` and as unit tests in `crates/plugin`; do not rewrite
    `tests/presets.rs` and `tests/dock_policy.rs`, only add to them if necessary.
 
 ### 15.3. The second half of R9 from SPEC-019 is closed here
@@ -502,6 +511,8 @@ Questions for discussion:
 - [ ] The palette panel opens, docks, and is saved in `settings.json` and in presets.
 - [ ] The form from `params` works for ribbon and panel buttons.
 - [ ] Plugin palettes are visible in the toggles and in the preset editor (R9 fully closed).
+- [ ] The SPEC-019 contract (R6a) is not rewritten: the signatures of `Palette::known()`,
+      `Docking::from_json`, `Docking::to_json`, and `Palette::named` are unchanged.
 - [ ] "Reset to Standard View" closes plugin palettes too.
 - [ ] A broken panel response does not crash the window; the limits are respected; there are no new
       imports.
@@ -513,7 +524,7 @@ Questions for discussion:
 |---|---|---|
 | Stage A (the form from `params`) | **Yes** | does not touch `dock.rs`, `presets.rs`, `settings.rs`; only `plugins.rs` and the new `plugin_form.rs` |
 | Stage B1 (ABI 2 manifest, panel model, validation) | **Yes, with a caveat** | `crates/plugin` barely overlaps with SPEC-019; there are no conflicts in the UI |
-| Stages B2–B4 (`Palette::Plugin`, registry, docking, panel responses) | **No** | direct conflicts in `dock.rs` (`Palette`, `named`, `to_json`/`from_json`), `settings.rs` (`palette_switches`), `presets.rs` (the editor), `lib.rs` (`palette_body`) |
+| Stages B2–B4 (`Palette::Plugin`, registry, docking, panel responses) | **No** | conflicts remain only in `dock.rs` (`Palette`, `known`, names) and `lib.rs` (`palette_body`); `settings.rs` and `presets.rs` extend themselves via `known()` and do not conflict |
 
 If parallel work is really needed:
 

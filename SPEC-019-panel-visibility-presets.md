@@ -209,19 +209,54 @@ The button unhides all panels of that tab. The line and the button are translate
 
 ### R6. Palettes: each preset's own set
 
-- `Docking::from_json` gets a policy:
-  - `Policy::Live` — the current one (for the top-level `settings.json`): an unknown palette is opened,
-    so that a new version does not "lose" a palette for the user;
-  - `Policy::Preset` — **exactly as recorded**: whatever is neither placed nor closed is closed;
-    unknown names are skipped.
+The layout is read and written only through the contract from R6a. The read policy:
+
+- `Policy::Live` — for the top-level `settings.json`: a known palette that the file neither placed nor
+  closed is opened, so that a new version does not "lose" a palette for the user;
+- `Policy::Preset` — **exactly as recorded**: a known palette that the file neither placed nor closed is
+  closed.
+
+Rules:
+
 - `Preset::from_json` uses `Policy::Preset`; `Settings::from_json` uses `Policy::Live`.
-- `Docking::to_json` must write `closed` explicitly and in full (it does now, `dock.rs:388-397`);
-  additionally, `"palettes_known": true` is added to the preset for format clarity — optional,
-  the implementation decides.
+- `Docking::to_json` must write `closed` explicitly and in full (it does now, `dock.rs:388-397`).
+- **An unknown name is not lost.** A name that is not in `known` is not placed (there is nothing to draw
+  it with), but it is kept in `Docking::unknown: Vec<String>` and appended to `closed` on write. That is
+  why a `plugin:<plugin id>:<panel id>` entry survives a disabled plugin, a version rollback, and reading
+  by an older binary; PR #2 (SPEC-020) needs no migration.
 - Consequence: a palette that appeared later (new in BIMCraft or from a plugin) is **closed** in an old
   preset, not open; that is exactly "its own set".
 - The order of applying a preset does not affect the result: applying means replacing `docking` as a
   whole, not gradually enabling/disabling.
+
+### R6a. A single enumeration point and single read/write signatures
+
+This is a mandatory part of **this** PR, not a future-proofing extra: SPEC-020 relies on it, and without
+it the second PR would have to be rewritten instead of extended
+(`ТЗ-019-020-PANELS-PR-SEQUENCE.md`, "Small note for PR #1").
+
+```rust
+// The only place that lists palettes. This PR returns the five built-ins;
+// SPEC-020 appends the plugin registry — call sites do not change.
+Palette::known() -> Vec<Palette>
+
+// Reading and writing a layout: a policy plus the list of known palettes.
+Docking::from_json(v: &Value, policy: Policy, known: &[Palette]) -> Docking
+Docking::to_json(&self, known: &[Palette]) -> Value
+Palette::named(name: &str, known: &[Palette]) -> Option<Palette>
+```
+
+- `Palette::ALL` is removed. `Palette::known()` is used everywhere palettes are enumerated: `dock.rs`
+  (`to_json`, `from_json`, `named`), `settings.rs` (`palette_switches`), the preset editor. Review check:
+  `rg 'Palette::ALL' crates/` finds nothing.
+- `known` is always `Palette::known()`; SPEC-020 will pass the list with plugin palettes there without
+  changing a single signature or call site.
+- The palette name format is fixed here too: `plugin:<plugin id>:<panel id>` (SPEC-020 §6.1). This PR has
+  no such palettes yet, so `Palette::named` returns `None` for them while the layout keeps the name via
+  `Docking::unknown` (R6).
+- `Palette::known()` is not cached in window static state: the list is computed from the current state
+  (in this PR — a constant, in SPEC-020 — a constant plus the registry), so PR #2 does not have to
+  invalidate a cache.
 
 ### R7. The profile does not rewrite the layout
 
@@ -368,7 +403,7 @@ Limits and resilience to a "hostile" file:
 | `panels_hidden` | 512 keys, key ≤ 160 characters |
 | `presets[].panels_hidden` | the same |
 | Unknown keys | preserved as is (for plugins that are not present right now) |
-| Unknown palette in a preset | skipped |
+| An unknown palette name (in any file) | kept verbatim in `closed` (R6) |
 | Duplicates | collapsed |
 
 ## 7. Integration points (`main` branch, `046b357`)
@@ -378,7 +413,7 @@ Limits and resilience to a "hostile" file:
 | `crates/ui-egui/src/ribbon.rs` | `CURRENT_TAB` (thread-local), `panel_key()`, the `panels_hidden` check in `panel()`, `toggle_panel()`, `take_toggled_panels()`, the header checkbox in Edit Tools |
 | `crates/ui-egui/src/lib.rs` | `panels_hidden` in `BimApp`; setting the current tab in `tab_content` (`4812-4830`) and `family_ribbon`; `take_toggled_panels` after the frame (next to `2413-2419`); removing the `docking.show(Tools,false)` mutation (`2350-2356`); the panel header as a checkbox |
 | `crates/ui-egui/src/presets.rs` | `Preset.panels_hidden`, `Preset.profile`, `to_json`/`from_json`, `apply_preset` (profile first), `save_preset`, `Preset::from_json` with `Policy::Preset`, the preset editor, "Reset to Standard View", "Show Every Panel", the summary |
-| `crates/ui-egui/src/dock.rs` | `Policy` in `Docking::from_json`, `Palette::known()`, the `known` parameter for `named`/serialization (before SPEC-020 — built-ins only) |
+| `crates/ui-egui/src/dock.rs` | `Policy` in `Docking::from_json(v, policy, known)`, `Docking::to_json(known)`, `Palette::named(name, known)`, `Palette::known()` instead of `Palette::ALL`, `Docking::unknown` (before SPEC-020 — built-in palettes only) |
 | `crates/ui-egui/src/style.rs` | nothing new: `Profile` is already here (`501-505`); the preset merely stores the value |
 | `crates/ui-egui/src/settings.rs` | `panels_hidden` in `Settings`, `to_json`/`from_json`, the `presets_section` section, remove the Tools reopening (`373-380`) and the "profile brought Tools back" block (`570-582`), add the profile to the preset editor |
 | `crates/ui-egui/src/tests/*` | new tests (see §9), update `tests/presets.rs` |
@@ -396,6 +431,9 @@ Limits and resilience to a "hostile" file:
 - A user who currently has one preset will not notice a difference.
 - Presets saved in the Rev profile, after the update, show Tools the way they were meant to be, not
   "the way the profile decided".
+- A layout with `plugin:…` names (from a build with plugin palettes) reads and writes with no loss: the
+  name stays in `closed` even if this build has no such palette (R6). That is both-way backward
+  compatibility and the absence of migration in SPEC-020.
 
 ## 9. Test plan
 
@@ -405,6 +443,10 @@ Unit tests (`crates/ui-egui/src/presets.rs`, `dock.rs`):
   Scripts does not open Scripts after reading;
 - `a_palette_added_later_stays_closed_in_an_old_preset`;
 - `the_live_layout_still_opens_a_palette_it_does_not_know` — `Policy::Live` has not changed;
+- `an_unknown_palette_name_survives_a_read_write_round_trip` — `plugin:rooms:areas` in `closed` reads
+  and writes back with no loss under both policies (this is what removes migration from SPEC-020);
+- `every_palette_the_ui_shows_comes_from_known` — `palette_switches` and the preset editor enumerate
+  exactly `Palette::known()`, and there is no other source of the palette list;
 - `panels_hidden_reads_back_as_written_and_a_hostile_list_reads_as_sense` — like
   `presets_read_back_as_written_…` (`presets.rs:237-254`);
 - `a_preset_without_panels_reads_with_none_hidden`;
@@ -483,7 +525,7 @@ via `t(title)` in `ribbon::panel`.
 
 | Stage | Content | Estimate |
 |---|---|---|
-| 1 | `Policy` in `Docking`, a preset's own palette set, migration, tests | 1–2 days |
+| 1 | `Policy` in `Docking`, `Palette::known()`, read/write signatures with `known`, `Docking::unknown`, a preset's own palette set, migration, tests | 1–2 days |
 | 2 | `panels_hidden` (top level), keys, the check in `ribbon::panel`, `tab_content` | 1–2 days |
 | 3 | The panel checkbox in Edit Tools, the empty tab, "Show Every Panel" | 1–2 days |
 | 4 | `panels_hidden` and `profile` in presets, `apply_preset` (profile first), the summary | 1 day |
@@ -528,22 +570,33 @@ reset-to-standard-view button that **does not affect the preset's profile** (R14
 | ABI 2 is a public contract | a manifest with `panels` is better released when the UI rework is already in `main`: otherwise a UI bug found later drags a contract change along with it |
 | Immediate benefit | the user gets panel hiding and presets without waiting for plugin panels |
 
-### 15.2. What to do here "with headroom" for SPEC-020 (+0.5 day)
+### 15.2. The contract for PR #2 (mandatory, not "headroom")
 
-So that the second PR does not rewrite this one, lay down in the first:
+`ТЗ-019-020-PANELS-PR-SEQUENCE.md` requires this PR to already contain a single palette enumeration point
+and a single layout-reading signature with a policy and that list. Otherwise PR #2 would have to be
+rewritten instead of extended. So the items below are part of the Definition of Done (§15.4), not a
+wish.
 
-1. **A single point of palette enumeration.** Instead of `Palette::ALL` — `Palette::known() -> Vec<Palette>`
-   (or `impl Iterator<Item = Palette>`; it currently returns the five built-ins). Returning a slice is not
-   allowed: SPEC-020 will add the plugin registry to it, and the signature must not change a second time.
-   Use it in `dock.rs` (`to_json`, `from_json`, `named`), in `settings.rs` (`palette_switches`), and in the
-   preset editor. SPEC-020 will extend it with the registry without changing the call sites.
-2. **A layout-reading signature with a policy and a list of known palettes**:
-   `Docking::from_json(v: &Value, policy: Policy, known: &[Palette])`. Here `known` is always
-   `Palette::known()`; SPEC-020 will pass the plugin registry there.
-3. **Tests — by file.** Keep the layout and presets in `tests/presets.rs` and a new
+1. **A single palette enumeration point** (R6a). `Palette::ALL` is removed; in its place
+   `Palette::known() -> Vec<Palette>`, currently the five built-ins. Returning a slice is not allowed:
+   SPEC-020 will add the plugin registry to the list. Used in `dock.rs` (`to_json`, `from_json`, `named`),
+   in `settings.rs` (`palette_switches`), and in the preset editor; there is no other palette enumeration
+   in the code.
+2. **Layout read/write signatures** (R6a):
+   `Docking::from_json(v: &Value, policy: Policy, known: &[Palette])`,
+   `Docking::to_json(&self, known: &[Palette])`,
+   `Palette::named(name: &str, known: &[Palette])`. Here `known` is always `Palette::known()`.
+3. **Preserving unknown names** (R6): `Docking::unknown` + writing into `closed`. Without it PR #2 would
+   need a migration for already saved layouts.
+4. **Tests — by file.** Keep the layout and presets in `tests/presets.rs` and a new
    `tests/dock_policy.rs`; plugin panel tests (SPEC-020) will go into a separate `tests/plugin_panels.rs`.
    This way the branches will not collide in the same test files.
-4. **Do not add** the `Palette::Plugin(..)` variant or the registry — that is SPEC-020's job.
+5. **Do not add** the `Palette::Plugin(..)` variant, the registry, or `PluginPalette` — that is SPEC-020's
+   job.
+
+"Contract is sufficient" check: after this PR, SPEC-020 only has to add `Palette::Plugin(usize)` and the
+registry, append them in `Palette::known()`, and return the name `plugin:<id>:<id>` from the palette-name
+function. Zero changes in `settings.rs`, `presets.rs`, `Policy`, or the preset reset.
 
 ### 15.3. What is deliberately NOT done here
 
@@ -562,7 +615,10 @@ So that the second PR does not rewrite this one, lay down in the first:
       as before.
 - [ ] "Reset to Standard View" does not touch the profile and edits the draft, not the window.
 - [ ] The profile does not rewrite the layout and does not change `settings.json`.
-- [ ] `Palette::known()` and `Docking::from_json(v, policy, known)` are introduced and used everywhere.
+- [ ] `Palette::known()` is the only source of the palette list; `Palette::ALL` does not occur in the code.
+- [ ] `Docking::from_json(v, policy, known)`, `Docking::to_json(known)`, and `Palette::named(name, known)`
+      are used everywhere; there are no other layout read/write signatures.
+- [ ] Unknown palette names are preserved in `closed` on read and write (R6).
 - [ ] The §9 tests are green, `cargo i18n check` is green, the documentation is updated.
 - [ ] The PR description notes the deferred part: plugin palettes — SPEC-020.
 
