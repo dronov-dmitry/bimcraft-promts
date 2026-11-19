@@ -2,6 +2,7 @@
 
 Status: **draft**, implementation required
 Date: 2026-11-19
+Video: https://youtu.be/8cws699O6i4
 Project: BIMCraft (Rust, `BIMCraft-024`, `eframe`/`egui` 0.36.2)
 Source: user request of 2026-11-19 (translated from Russian): "right now, when an error
 pops up you cannot copy it. You select the text, press Ctrl+C, and it says select what
