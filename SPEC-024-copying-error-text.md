@@ -1,15 +1,21 @@
 # SPEC-024. Copying an error message: selection, Ctrl+C, and a Copy button
 
 Status: **draft**, implementation required
+
 Date: 2026-11-19
+
 Video: https://youtu.be/8cws699O6i4
+
 Project: BIMCraft (Rust, `BIMCraft-024`, `eframe`/`egui` 0.36.2)
+
 Source: user request of 2026-11-19 (translated from Russian): "right now, when an error
 pops up you cannot copy it. You select the text, press Ctrl+C, and it says select what
 to copy first. Write SPEC-024-***.md describing the task of fixing this bug: if an error
 appears and you select it, it must be possible to copy it. Also make a Copy button inside
 the error box so that the error can be copied to the clipboard in one click."
+
 Related PRs:
+
 - **#473** "Copy-Paste everything" — introduced the global interception of
   Ctrl+C/Ctrl+X/Ctrl+V (`clipboard_events`) and the string `select what to copy first`;
   this is where the regression comes from.
