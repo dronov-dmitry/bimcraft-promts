@@ -1,13 +1,15 @@
 # SPEC-020. Plugin panels: declarative panels and input forms (ABI 2)
 
-Status: **draft**, implementation required
+Status: **implemented in PR #614** (2026-11-24), under review
 Date: 2026-11-18
+Implementation date: 2026-11-24
+PR: https://github.com/IPedrax/BIMCraft/pull/614 (branch `dronov-dmitry:tz-020-plugin-panels`)
 Project: BIMCraft (Rust, `crates/plugin`, `crates/plugin-sdk`, `crates/ui-egui`, egui 0.36, wasmi 2.0)
 Source: user request of 2026-11-18: "can plugins create their own panels, like in Revit?"
 Related spec: `SPEC-019-panel-visibility-presets.md` (panel visibility and presets).
 PR order: **second**, after SPEC-019.
 Task type: extending the ABI to version 2 and the window; the model, the project file, and the commands
-do not change, ABI 1 keeps working.
+do not change, and ABI 1 keeps working.
 
 > **In short.** A plugin already declares a tab and ribbon panels, but a button runs a function without
 > parameters, and the only way a plugin can show something to a person is a text or Markdown report in a
@@ -284,6 +286,16 @@ A function's response is the usual envelope `{"ok": true, "result": {...}}`, whe
   in the status bar; the panel keeps the last successful content. The call itself is still considered
   successful, just as with `report` today (`plugins.rs:317-332`).
 
+The exact limits checked by `PanelAnswer::from_json` (`crates/plugin/src/answer.rs`):
+
+- `values` — up to 512 entries; `id` — 1–64 characters; a value — string/number/bool/null, and the
+  value's text — up to 4096 characters;
+- `text` — up to 64 KiB, `error` — up to 4096 characters, `badge` — up to 64 characters;
+- `table.rows` — up to 2000 rows, up to 32 cells per row; a cell string longer than 1024 characters is
+  truncated;
+- an unknown field in `panel` (not `values`, `text`, `table`, `badge`, `error`) rejects the whole
+  response: one line in the log, the panel keeps the previous content.
+
 ### 6.4. Lifecycle and calls
 
 | When | What happens |
@@ -319,7 +331,12 @@ not part of this spec.
   within a session but is **not** saved: only names go into the settings file.
 - A plugin panel cannot be embedded into an existing ribbon tab; its button functions are duplicated in
   the plugin tab's panel if desired (as now, §1).
-- Panel header: `title`, the `Icon::Code` icon, tooltip "Plugin panel <plugin name>".
+- Panel header: `title`, the `Icon::Code` icon, tooltip "Plugin panel <plugin name>"; if the response
+  sent a `badge`, it is drawn next to the header (`Title · badge`), otherwise only `title`. `badge` is
+  optional and is left to the plugin's discretion.
+- The dock width is egui state (`PanelState`), not `settings.json`: the file stores the side, the stack,
+  the tabs, and whether the palette is open; the width at startup comes from the default (290 pt, +12 pt
+  on the right) and is not restored from the previous session.
 - `Manage > Plugins` shows, for each plugin, the list of declared panels and the reason for a rejection if
   a panel is declared incorrectly.
 
@@ -340,8 +357,18 @@ functions (refresh, on_open) that have nothing to do on the ribbon.
 - Traversal order is the widget declaration order.
 - The panel uses the host's colors, fonts, and spacing (`pal()`, `style::semibold`), in both profiles and
   in the dark theme. The plugin does not set its own colors.
-- The minimum panel width is 240 pt (like Tools), the table scrolls horizontally, and long text in a cell
-  does not wrap (like Markdown report tables, `docs/areas/plugins.md:236-240`).
+- The minimum width of a side dock is 140 pt (the common minimum of palettes); the 240 pt from an early
+  revision of this spec is not a separate minimum: a plugin panel starts at 290 pt and is dragged in the
+  range 140 pt … half the view width.
+- The panel content **does not** widen the dock:
+  - `row` divides the available width into equal columns; a field in a row does not take the full width
+    and does not push its neighbor out of the edge;
+  - `table` scrolls horizontally inside the panel; the column `width` does not affect the dock width, and
+    long text in a cell does not wrap (like Markdown report tables, `docs/areas/plugins.md:236-240`);
+  - a side dock is limited to half the view width (not less than 320 pt) — a general safeguard so that a
+    plugin panel does not cover the work area;
+  - opening and closing a panel does not change the dock width; this is checked by the test
+    `a_wide_panel_does_not_widen_the_dock` (§10.1).
 
 ## 7. ABI and the host
 
@@ -395,6 +422,26 @@ Window tests (`crates/ui-egui/src/tests/`, `egui_kittest`, like `tests/presets.r
 - `a_panel_of_a_disabled_plugin_closes_and_its_state_is_kept` (overlaps with SPEC-019);
 - `a_second_click_does_not_duplicate_the_first_calls_undo_step`.
 
+### 10.1. Actually in PR #614
+
+Window (`crates/ui-egui/src/tests/plugins.rs`), test names in the code:
+
+- `a_plugin_panel_opens_with_its_widgets_and_its_button_runs_the_plugin` — the panel is registered as
+  `plugin:sample:areas`, draws a caption and a level field, and the button runs the function; it is
+  checked that reading makes no undo step;
+- `a_panel_of_a_disabled_plugin_is_kept_in_the_layout_and_comes_back_when_it_is_enabled` — the panel of a
+  disabled plugin leaves the registry, the name stays in the layout, and it comes back when enabled;
+- `a_wide_panel_does_not_widen_the_dock` — a table wider than the dock does not widen the right dock
+  (not more than 330 pt with a 1280 pt window);
+- `a_plugin_function_that_needs_a_file_asks_for_it_in_the_system_dialog` — the path is still asked for by
+  the system dialog (overlaps with the `params` form).
+
+Notes on the fixture: `text` requires `label` (SPEC §6.2). The same error was in
+`crates/plugin/src/manifest.rs` and `crates/plugin/tests/sample.rs`: without `label` the parser rejected
+the whole manifest. Fixed, after which the plugin unit tests are green. The field caption and the level
+combo box produce two nodes with the same name, so the check uses `query_all_by_label` rather than
+`query_by_label`. Full run: 18 `tests::plugins` tests green.
+
 CLI/MCP: regression — the `plugin:<id>:<fn>` commands work without a window and without panels;
 `list_commands` does not change; in read-only mode a panel button that changes the model is rejected just
 like a command.
@@ -435,6 +482,8 @@ After the changes: `cargo i18n update` (after `rustfmt`), then `cargo i18n check
 6. No new imports for the guest; still no `unsafe` in the workspace.
 7. `Manage > Plugins` shows the panels and the reasons for rejection.
 8. The §10 tests are green; `cargo i18n check` is green.
+9. The panel does not widen the dock and does not cover the work area: row fields share the width, the
+   table scrolls, and a side dock is not more than half the view width.
 
 ## 14. Risks and open questions
 
@@ -442,6 +491,7 @@ After the changes: `cargo i18n update` (after `rustfmt`), then `cargo i18n check
 |---|---|
 | A synchronous call of up to 5 s "freezes" the window | "Running…", disabling the panel; moving to a thread is a separate task |
 | A panel with 100 fields does not fit in the window | limits (512 widgets), scrolling, minimum width |
+| A panel with a wide table or wide fields widens the dock and covers the view | `row` — equal columns, the table scrolls, a side dock is limited to half the view width; the test `a_wide_panel_does_not_widen_the_dock` |
 | A plugin declared a panel, but the function always fails | an error in the panel, `error`, a line in the log; the panel remains |
 | Panel names change between plugin versions | a key based on the panel `id`, not `title`; SPEC-019 requires preserving unknown keys |
 | Reactivity is expected right away | explicitly move it to stage C and explain the dependency on events |
@@ -516,6 +566,7 @@ The contract is already in `main` (§15.1), so every step here is purely additiv
 - [ ] "Reset to Standard View" closes plugin palettes too.
 - [ ] A broken panel response does not crash the window; the limits are respected; there are no new
       imports.
+- [ ] The panel does not widen the dock: a wide table scrolls, row fields share the width.
 - [ ] The §10 tests are green; `cargo i18n check` is green; the documentation is updated.
 
 ## 16. Whether it can be done in parallel
@@ -537,3 +588,207 @@ If parallel work is really needed:
 
 **Conclusion:** two PRs sequentially — **SPEC-019, then SPEC-020**. If parallelism is needed, the only
 safe parallel work is stage A (and, with a caveat, B1) from this spec.
+
+## 17. Implementation (2026-11-24)
+
+Stages A, B1, B2, B3, and B4 are fully implemented; stage C (reactivity) was not in scope and was not
+done. The code is in the branch `dronov-dmitry:tz-020-plugin-panels` (fork), PR #614 in
+`IPedrax/BIMCraft`; the working copy is `BIMCraft-020`.
+
+### 17.1. What went in, stage by stage
+
+**A. The form from `params`.**
+
+- Clicking a function with non-empty `params.properties` opens a modal dialog; `Run` calls the function
+  with the entered values, `Cancel` closes. Empty `params` — the previous one-click run.
+- Supported: `boolean`, `integer`, `number`, `string`, `enum` (string or integer), `default`, `minimum`,
+  `maximum`, `title`, `description`, `required`, and the `x-bimcraft` extensions: `level`, `length`,
+  `library:<kind>`, `selection`, `path`.
+- `length` is entered in project units (`Units::parse`), and mm go into the call. `level` and `library` —
+  lists from the model, `selection` — read-only and not sent.
+- An unclear schema (`object` in a property, `array`, `oneOf`, `$ref`, an unknown `x-bimcraft`) does not
+  break the plugin: the field is drawn as text with "Unsupported field: …"; if it is mandatory, the call
+  is rejected.
+- Errors name the field: "<field>: This field is required", "…: A number is expected", "…: Out of range".
+- Form values live in `BimApp::plugin_forms` by command id and are not written to `settings.json`.
+
+**B1. The ABI 2 manifest.**
+
+- `manifest::ABI = 2`, `SUPPORTED = [1, 2]`; the rejection message says "this BIMCraft speaks ABI 1 and
+  2". An ABI 1 plugin with `panels` is rejected with "a plugin of ABI 1 can't declare panels".
+- Model: `Panel` (`id`, `title`, `order`, `dock`, `on_open`, `refresh`, `widgets`), `Widget` (all 14 types
+  from §6.2), `Dock`, `Unit`, `Align`, `Choice`, `Column`, `EnabledWhen`; a function gained
+  `ui: ribbon | both | panel` (default `both`).
+- Widgets are read strictly: an unknown type or an extra field — a rejection naming the widget and
+  listing the known types. Limits: 64 panels, 512 widgets, `row`/`group` depth — 8, panel and widget ids
+  are unique, and `on_open`/`refresh`/a button's `function` reference only functions of this plugin.
+- The panel response is parsed by a separate function `PanelAnswer::from_json`
+  (`crates/plugin/src/answer.rs`) with the §6.3 limits: 2000 rows, 32 cells, 1024 characters per cell
+  (truncated), 64 KiB of text, 4 KiB of error, 64 characters of badge, up to 512 values (a value's text up
+  to 4096 characters); unknown response fields and non-scalar values are rejected.
+- `Plugins::panels()` returns the panels of loaded plugins in the plugin read order, then `order`, then
+  `id`; functions with `ui: panel` do not appear on the ribbon. `info` answers the guest with `"abi": 2`;
+  the set of imports and the sandbox limits did not change.
+
+**B2. The palette and docking.**
+
+- `Palette::Plugin(usize)`; the `PluginPalette` registry (`name`, `title`, `plugin`, `plugin_name`,
+  `panel`, `dock`, `float`, `on_open`, `refresh`, `widgets`).
+- The palette name is `plugin:<plugin id>:<panel id>`; it is the same in `settings.json`, presets, and
+  `home`.
+- `Palette::known()` is extended with `Plugin(0..registry.len())`, so the toggles in Settings > User
+  Interface, the Palettes menu, the preset editor, and `closed` pick the panels up without changes to
+  `settings.rs` and `presets.rs`.
+- `dock` is honored on the first show (`left`/`right`/`bottom`/`float`; `float` opens as a window over
+  views with an offset from the previous one). The header is `title`, the tooltip is
+  "Plugin panel: <plugin name>".
+- A plugin palette is excluded from `panels_hidden` (that one holds only ribbon panels) and is not
+  embedded into ribbon tabs.
+- `Reset to Standard View`/`Docking::default()`/`Docking::revit()` close it like any other: it is simply
+  absent from the standard layout.
+
+**B3. Drawing and calls.**
+
+- All §6.2 widgets: `label`, `row`, `group` (collapsible), `text` (single- and multiline, readonly,
+  `unit`), `number`, `checkbox`, `select`, `level`, `library`, `selection`, `button`, `table`,
+  `text_panel`, `separator`.
+- The table is an `egui::Grid` with column headers, alignment (`left`/`center`/`right`), width, the host
+  color, and horizontal scrolling; long cell text does not wrap.
+- `row` divides the available width into equal columns, the table is limited to the palette width, and a
+  side dock — to half the view width (not less than 320 pt). The panel content does not widen the dock
+  and does not cover the view.
+- Widget values are the call's parameters. Lengths go in mm, areas in mm², volumes in mm³, angles in
+  degrees; display and input are in project units. Read-only widgets are not sent.
+- `on_open` — once on the palette's first show; a panel button calls its function and then `refresh`;
+  Refresh calls `refresh`; a widget change and every frame make no calls.
+- The `panel` response is applied to widgets by `id` (an unknown `id` — one line in the log), fills the
+  table, `text_panel`, and readonly `text`, the badge in the header, and the red error line.
+- A broken response: a line in the plugin log and in the status bar, the panel keeps the last successful
+  content, and the call is considered successful. An error of the call itself (a trap, a limit, a
+  read-only refusal) is also shown as a red line in the panel.
+- Buttons are disabled during the call, and "Running…" is drawn. The call is still synchronous: there is
+  no separate thread, so the label barely has time to appear — this is exactly the §6.4 case that is
+  moved to a separate task.
+
+**B4. The Plugins window, Find, documentation, the example.**
+
+- `Manage > Plugins` shows the list of declared panels (`Panels: <title> (<id>), …`); the reason for a
+  panel's rejection is the plugin's general `Status::Failed`, since a bad panel rejects the whole
+  manifest.
+- Find and the ribbon buttons go through the same `run_plugin_function`, so the form from `params` works
+  everywhere.
+- `docs/areas/plugins.md`: sections "Parameter form", "Panels (ABI 2)", "Panel response schema",
+  "Panel boundaries"; "Manifest", `info`, and "Version 1 and 2 boundaries" updated.
+- `README.md` — a line about forms and declarative ABI 2 palettes; `crates/plugin-sdk/src/lib.rs` — an
+  example of a `panel` response.
+- The sample plugin: a `panel_summary` function was added to `crates/plugin/tests/sample-plugin`, and the
+  `areas` panel and `abi: 2` to the fixture `crates/plugin/tests/sample.rs`.
+
+### 17.2. Decisions taken and differences from the spec text
+
+1. **The palette registry is thread-local, not a `BimApp` field.** By the SPEC-019 contract
+   `Palette::known()` remains `fn known() -> Vec<Palette>` without `self`, so the registry is stored in a
+   `thread_local` (`dock::PLUGIN_PALETTES`) and filled by `dock::set_plugin_palettes()` when plugins are
+   installed. Pros: the contract signatures are not rewritten, and each test sees its own registry. The
+   index, as required, is not written to the file; `BimApp::new` clears the registry so that one test's
+   state does not leak into another.
+2. **Open unknown panels are remembered separately.** In addition to the existing `Docking::unknown`
+   (names that go to `closed`), `Docking::unknown_open` was added — names that were in the stack or in a
+   window in the file. `Docking::adopt()` shows them on the side from `dock` when a plugin appears. This
+   closes the DoD item "the state of a disabled plugin's panel is restored" without changing the R6a
+   behavior for `closed`.
+3. **The panel state is stored by palette name**, not by index: `BimApp::plugin_panel_states:
+   BTreeMap<String, PluginPanelState>`. The registry index changes on Refresh or when a plugin is
+   enabled, the name does not. When a plugin is disabled, the state stays in memory; `on_open` is not
+   called again.
+4. **`x-bimcraft: path` in the form is a text field.** A mandatory `path`/`file` is still chosen by the
+   system dialog before the form, and only with the `files` permission. There is no "Browse…" button for
+   an optional `path` — this is a deliberate v1 simplification.
+5. **"Running…"** is drawn, but the synchronous call executes in the same frame; a full display requires
+   moving the call to a thread (outside this spec).
+6. **The order of form fields** is the one `serde_json` gives (with the current features — by key); the
+   panel widget order is preserved because it is a `Vec`.
+7. **The SPEC-019 test was updated:** `every_palette_the_ui_shows_comes_from_known` no longer requires
+   `known()` to be exactly the five built-in palettes, and instead checks the built-in ones and the
+   absence of plugin ones without a registry.
+8. **Dock width.** `egui::Panel` widens to fit its content and remembers the width, so `row` was switched
+   to equal columns, the table got `max_width`, and a side dock got `max_size` (half the view, not less
+   than 320 pt). The dock width is egui state (`PanelState`), not `settings.json`; at startup it is the
+   default. The regression is closed by the test `a_wide_panel_does_not_widen_the_dock`.
+9. **`badge` is optional.** The host draws it next to the header (`Title · badge`) if the response sent
+   it; a plugin may not send it, and then only the panel name remains in the header.
+
+### 17.3. Files
+
+New:
+
+- `crates/plugin/src/answer.rs` — parsing and limits of the `panel` response;
+- `crates/ui-egui/src/plugin_form.rs` — the form from `params` and its dialog;
+- `crates/ui-egui/src/plugin_panels.rs` — panel state, drawing, and calls.
+
+Changed:
+
+- `crates/plugin/src/manifest.rs`, `crates/plugin/src/lib.rs`, `crates/plugin/src/runtime.rs`;
+- `crates/ui-egui/src/dock.rs`, `crates/ui-egui/src/plugins.rs`, `crates/ui-egui/src/lib.rs`,
+  `crates/ui-egui/src/settings.rs` (only the toggle caption: `p.title()` instead of `t(p.name())`);
+- `crates/plugin-sdk/src/lib.rs`, `crates/plugin/tests/sample.rs`,
+  `crates/plugin/tests/sample-plugin/src/lib.rs`;
+- `crates/ui-egui/src/tests/plugins.rs`, `crates/ui-egui/src/tests/dock_policy.rs`;
+- `docs/areas/plugins.md`, `README.md`, the `translations/ui/*.po` catalogs, and `bimcraft-ui.pot`.
+
+### 17.4. Tests
+
+`crates/plugin` unit tests — **25 unit and 3 integration tests green**; after fixing the fixtures (a
+`text` without `label` rejected the manifest) they pass locally. The full `cargo test --workspace` — on CI.
+
+- `a_plugin_of_abi_one_cannot_declare_panels`;
+- `a_panel_naming_an_unknown_function_is_refused`;
+- `an_unknown_widget_type_is_refused_and_names_the_widget`;
+- `two_widgets_with_one_id_are_refused`;
+- `a_manifest_of_abi_two_without_panels_loads_as_before`;
+- `the_answer_of_a_panel_is_checked_before_the_window_sees_it`;
+- additional: the sample panel from §6.1 parses, widget depth/count, table and text limits.
+
+Window tests (`crates/ui-egui/src/tests/plugins.rs`):
+
+- `a_plugin_panel_opens_with_its_widgets_and_its_button_runs_the_plugin`;
+- `a_panel_of_a_disabled_plugin_is_kept_in_the_layout_and_comes_back_when_it_is_enabled`;
+- `a_wide_panel_does_not_widen_the_dock` — a wide table does not widen the right dock;
+- the previous plugin tests (ribbon, Find, a file with the `files` permission, the Plugins window) remain
+  as regression. The full `tests::plugins` run — 18 green.
+
+### 17.5. Checks
+
+Done in `BIMCraft-020` on the PR #614 branch:
+
+- `cargo check --workspace` — success;
+- `cargo clippy --workspace -- -D warnings` — no warnings;
+- `cargo fmt --check` — clean;
+- `cargo i18n update`, then `cargo i18n check` — green (new strings: `Run`, `Cancel`, `Refresh`,
+  `Running…`, `Unsupported field: {}`, `{}: This field is required`, `{}: A number is expected`,
+  `{}: Out of range`, `The plugin's panel couldn't be shown`, `The plugin's panel couldn't be shown: {}`,
+  `Plugin panel`, `Plugin panel: {}`, `Panels: {}`, `Tick the fields and run the plugin's command`);
+- `cargo test -p bimcraft-ui-egui --lib tests::plugins` — 18 tests green;
+- `cargo test -p bimcraft-plugin` — 25 unit + 3 integration tests green;
+- `scripts/debug.sh --non-interactive` from the workspace root — the BIMCraft-020 window with the plugin
+  started, the bridge came up;
+- `cargo check --manifest-path crates/plugin/tests/sample-plugin/Cargo.toml` — success.
+
+The unit tests caught an error in the fixtures: `text` without the mandatory `label` rejected the whole
+manifest; `crates/plugin/src/manifest.rs` and `crates/plugin/tests/sample.rs` were fixed. The full
+`cargo test --workspace` — on CI. Commits created: 5 atomic ones (`feat(plugin)`, `feat(ui)`,
+`chore(i18n)`, `docs`, `test(plugin)`); the branch is pushed to the fork, PR #614.
+
+### 17.6. Definition of Done status (§15.4)
+
+| Item | Status |
+|---|---|
+| ABI 1 works unchanged; ABI 2 with `panels` and without — loads | done |
+| The palette panel opens, docks, and is saved in `settings.json` and in presets | done |
+| The form from `params` works for ribbon and panel buttons | done (the panel uses its widgets as parameters) |
+| Plugin palettes are visible in the toggles and in the preset editor | done via `Palette::known()` |
+| The SPEC-019 contract (R6a) is not rewritten | signatures unchanged; only `unknown_open`, `adopt`, `forget_plugin_palettes` added |
+| "Reset to Standard View" closes plugin palettes too | done |
+| A broken panel response does not crash the window; the limits are respected; there are no new imports | done |
+| The panel does not widen the dock: a wide table scrolls, row fields share the width | done; the test `a_wide_panel_does_not_widen_the_dock` |
+| The §10 tests are green; `cargo i18n check` is green; the documentation is updated | 18 UI + 25 unit + 3 integration tests green; the full workspace — CI; i18n and documentation — yes |
